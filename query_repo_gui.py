@@ -19,21 +19,9 @@ CHAT_MODEL = "llama3.1"
 
 # Defaults
 DEFAULT_INDEX_DIR = os.path.expanduser("~/dev/indexes/commerce_customer_aeo")
-DEFAULT_COLLECTION = "repo_chunks_commerce_customer_aeo"
 DEFAULT_REPO_ROOT = os.path.expanduser("~/dev/repos/commerce-customer-aeo")
 DEFAULT_TOP_K = 16
 DEFAULT_MAX_DIRECT_EMBED_CHARS = 4000
-
-
-def distance_to_score(dist: float) -> float:
-    """
-    Convert a distance to a similarity score in percent.
-
-    0 distance -> 100 percent (perfect match)
-    Large distance -> closer to 0 percent
-    """
-    sim = 1.0 / (1.0 + dist)
-    return sim * 100.0
 
 
 def embed_text(text: str):
@@ -174,7 +162,8 @@ class CodeSearchGUI(tk.Tk):
         super().__init__()
         self.title("Local Code Query")
 
-        self.last_results = None   # list of {"meta": meta, "distance": dist}
+        # list of {"meta": meta, "distance": dist}
+        self.last_results = None
         self.last_index_dir = None
         self.last_repo_root = None
 
@@ -212,23 +201,17 @@ class CodeSearchGUI(tk.Tk):
         browse_repo_btn = ttk.Button(params_frame, text="Browse", command=self.browse_repo_root)
         browse_repo_btn.grid(row=1, column=2, padx=4)
 
-        # Collection
-        ttk.Label(params_frame, text="Collection:").grid(row=2, column=0, sticky="w")
-        self.collection_var = tk.StringVar(value=DEFAULT_COLLECTION)
-        self.collection_entry = ttk.Entry(params_frame, textvariable=self.collection_var, width=40)
-        self.collection_entry.grid(row=2, column=1, sticky="w", padx=4)
-
         # Top K
-        ttk.Label(params_frame, text="Top K:").grid(row=3, column=0, sticky="w")
+        ttk.Label(params_frame, text="Top K:").grid(row=2, column=0, sticky="w")
         self.top_k_var = tk.StringVar(value=str(DEFAULT_TOP_K))
         self.top_k_entry = ttk.Entry(params_frame, textvariable=self.top_k_var, width=10)
-        self.top_k_entry.grid(row=3, column=1, sticky="w", padx=4)
+        self.top_k_entry.grid(row=2, column=1, sticky="w", padx=4)
 
         # Max chars before summarizing
-        ttk.Label(params_frame, text="Max chars before summarize:").grid(row=4, column=0, sticky="w")
+        ttk.Label(params_frame, text="Max chars before summarize:").grid(row=3, column=0, sticky="w")
         self.max_chars_var = tk.StringVar(value=str(DEFAULT_MAX_DIRECT_EMBED_CHARS))
         self.max_chars_entry = ttk.Entry(params_frame, textvariable=self.max_chars_var, width=10)
-        self.max_chars_entry.grid(row=4, column=1, sticky="w", padx=4)
+        self.max_chars_entry.grid(row=3, column=1, sticky="w", padx=4)
 
         params_frame.columnconfigure(1, weight=1)
 
@@ -236,7 +219,7 @@ class CodeSearchGUI(tk.Tk):
         bug_frame = ttk.LabelFrame(self.tab_query, text="Bug or Question")
         bug_frame.pack(fill="both", expand=True, padx=8, pady=4)
 
-        self.bug_text = ScrolledText(bug_frame, wrap="word", height=12)
+        self.bug_text = ScrolledText(bug_frame, wrap="word", height=10)
         self.bug_text.pack(fill="both", expand=True, padx=4, pady=4)
 
         btn_frame = ttk.Frame(bug_frame)
@@ -255,13 +238,24 @@ class CodeSearchGUI(tk.Tk):
         output_btn_frame = ttk.Frame(output_frame)
         output_btn_frame.pack(fill="x", padx=4, pady=2)
 
-        save_output_btn = ttk.Button(output_btn_frame, text="Save output to file", command=self.save_output_to_file)
+        save_output_btn = ttk.Button(output_btn_frame, text="Save log to file", command=self.save_output_to_file)
         save_output_btn.pack(side="left")
 
         view_files_btn = ttk.Button(output_btn_frame, text="View result files", command=self.show_files_window)
         view_files_btn.pack(side="right")
 
-        self.output_text = ScrolledText(output_frame, wrap="word", height=12, state="normal")
+        # Summary / Answer box
+        summary_frame = ttk.LabelFrame(output_frame, text="Summary / Answer")
+        summary_frame.pack(fill="both", expand=True, padx=4, pady=(4, 2))
+
+        self.summary_text = ScrolledText(summary_frame, wrap="word", height=8, state="normal")
+        self.summary_text.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # Log box
+        log_frame = ttk.LabelFrame(output_frame, text="Log")
+        log_frame.pack(fill="both", expand=True, padx=4, pady=(2, 4))
+
+        self.output_text = ScrolledText(log_frame, wrap="word", height=8, state="normal")
         self.output_text.pack(fill="both", expand=True, padx=4, pady=4)
 
     def _build_prompts_tab(self):
@@ -385,13 +379,13 @@ class CodeSearchGUI(tk.Tk):
     def save_output_to_file(self):
         content = self.output_text.get("1.0", "end-1c")
         if not content.strip():
-            messagebox.showinfo("Info", "There is no output to save.")
+            messagebox.showinfo("Info", "There is no log content to save.")
             return
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_name = f"query_output_{ts}.txt"
+        default_name = f"query_log_{ts}.txt"
         path = filedialog.asksaveasfilename(
-            title="Save output",
+            title="Save log",
             defaultextension=".txt",
             initialfile=default_name,
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
@@ -403,10 +397,10 @@ class CodeSearchGUI(tk.Tk):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
         except Exception as e:
-            messagebox.showerror("Error", f"Could not save output:\n{e}")
+            messagebox.showerror("Error", f"Could not save log:\n{e}")
             return
 
-        messagebox.showinfo("Saved", f"Output saved to:\n{path}")
+        messagebox.showinfo("Saved", f"Log saved to:\n{path}")
 
     def load_prompts_from_file(self):
         path = filedialog.askopenfilename(
@@ -465,20 +459,44 @@ class CodeSearchGUI(tk.Tk):
 
         messagebox.showinfo("Saved", f"Prompts saved to:\n{path}")
 
+    def _compute_relative_scores(self, distances):
+        """
+        Compute per query relative scores 0 to 100.
+
+        Smallest distance -> 100
+        Largest distance  -> 0
+        """
+        if not distances:
+            return []
+
+        min_d = min(distances)
+        max_d = max(distances)
+
+        if max_d == min_d:
+            return [100.0 for _ in distances]
+
+        scores = []
+        for d in distances:
+            score = 100.0 * (max_d - d) / (max_d - min_d)
+            if score < 0:
+                score = 0.0
+            if score > 100:
+                score = 100.0
+            scores.append(score)
+        return scores
+
     def run_query(self):
+        # Clear both summary and log
         self.output_text.delete("1.0", "end")
+        self.summary_text.delete("1.0", "end")
         self.last_results = None
 
         index_dir = self.index_dir_var.get().strip()
-        collection_name = self.collection_var.get().strip()
         repo_root = self.repo_root_var.get().strip()
         bug = self.bug_text.get("1.0", "end-1c").strip()
 
         if not index_dir:
             messagebox.showerror("Error", "Index directory is required.")
-            return
-        if not collection_name:
-            messagebox.showerror("Error", "Collection name is required.")
             return
         if not bug:
             messagebox.showerror("Error", "Bug or question text is required.")
@@ -509,13 +527,32 @@ class CodeSearchGUI(tk.Tk):
                 path=index_dir,
                 settings=Settings(anonymized_telemetry=False),
             )
-            collection = client.get_collection(collection_name)
+
+            collections = client.list_collections()
+            if not collections:
+                messagebox.showerror(
+                    "Error",
+                    "No collections found in this index directory. "
+                    "You may need to build an index first."
+                )
+                return
+
+            if len(collections) > 1:
+                self.append_output("[gui_query] Multiple collections found in this index directory.")
+                self.append_output("[gui_query] Available collections:")
+                for c in collections:
+                    self.append_output(f"  {c.name}")
+                self.append_output(f"[gui_query] Using first collection: {collections[0].name}")
+            else:
+                self.append_output(f"[gui_query] Using collection: {collections[0].name}")
+
+            collection = client.get_collection(collections[0].name)
+
         except Exception as e:
-            messagebox.showerror("Error", f"Could not open collection '{collection_name}':\n{e}")
+            messagebox.showerror("Error", f"Could not open collection from index directory:\n{e}")
             return
 
         self.append_output(f"[gui_query] Using index directory: {index_dir}")
-        self.append_output(f"[gui_query] Using collection: {collection_name}")
 
         query_for_embedding = bug
         if len(bug) > max_chars:
@@ -549,6 +586,8 @@ class CodeSearchGUI(tk.Tk):
         metas = metas_list[0]
         dists = dist_list[0]
 
+        scores = self._compute_relative_scores(dists)
+
         self.last_results = [
             {"meta": meta, "distance": dist}
             for meta, dist in zip(metas, dists)
@@ -560,13 +599,18 @@ class CodeSearchGUI(tk.Tk):
         self.append_output(f"Retrieved {count} snippet chunks.")
 
         self.append_output("Using snippets from:")
-        for idx, (meta, dist) in enumerate(zip(metas, dists), start=1):
+        for idx, (meta, dist, score) in enumerate(zip(metas, dists, scores), start=1):
             path = meta.get("path", "<unknown>")
             chunk_idx = meta.get("chunk_index", "?")
-            score = distance_to_score(dist)
             self.append_output(
                 f"  [{idx:02d}] {score:5.1f}%  {path} (chunk {chunk_idx}, distance {dist:.4f})"
             )
+
+        best_score = max(scores) if scores else 0.0
+        if best_score < 15.0:
+            self.append_output("")
+            self.append_output("[gui_query] WARNING: All retrieved snippets have very low relative scores.")
+            self.append_output("[gui_query] The answer may rely mostly on the bug text and not on code context.")
 
         self.append_output("")
         self.append_output("[gui_query] Asking LLM with retrieved context...")
@@ -577,6 +621,9 @@ class CodeSearchGUI(tk.Tk):
         except Exception as e:
             messagebox.showerror("Error", f"Error calling chat model:\n{e}")
             return
+
+        self.summary_text.insert("1.0", answer)
+        self.summary_text.see("1.0")
 
         self.append_output("\n=== ANSWER ===\n")
         self.append_output(answer)
@@ -601,19 +648,19 @@ class CodeSearchGUI(tk.Tk):
 
         files_for_rows = []
 
-        # Aggregate best score and chunk count per path
+        distances = [item["distance"] for item in self.last_results]
+        scores_all = self._compute_relative_scores(distances)
+
         best_by_path = {}
         counts_by_path = {}
-        for item in self.last_results:
+
+        for item, score in zip(self.last_results, scores_all):
             meta = item["meta"]
-            dist = item["distance"]
             path = meta.get("path", "<unknown>")
-            score = distance_to_score(dist)
             if path not in best_by_path or score > best_by_path[path]:
                 best_by_path[path] = score
             counts_by_path[path] = counts_by_path.get(path, 0) + 1
 
-        # Sort files by score descending
         sorted_items = sorted(best_by_path.items(), key=lambda x: x[1], reverse=True)
 
         for idx, (path, score) in enumerate(sorted_items, start=1):
