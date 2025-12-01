@@ -163,7 +163,7 @@ class CodeSearchGUI(tk.Tk):
         super().__init__()
         self.title("Local Code Query")
 
-        self.last_metas = None
+        self.last_results = None
         self.last_index_dir = None
         self.last_repo_root = None
 
@@ -254,7 +254,6 @@ class CodeSearchGUI(tk.Tk):
         self.output_text.pack(fill="both", expand=True, padx=4, pady=4)
 
     def _build_prompts_tab(self):
-        # Controls for load and save prompts
         ctl_frame = ttk.Frame(self.tab_prompts)
         ctl_frame.pack(fill="x", padx=8, pady=4)
 
@@ -264,7 +263,6 @@ class CodeSearchGUI(tk.Tk):
         save_prompts_btn = ttk.Button(ctl_frame, text="Save prompts to file", command=self.save_prompts_to_file)
         save_prompts_btn.pack(side="left", padx=4)
 
-        # Summarizer prompt
         sum_frame = ttk.LabelFrame(self.tab_prompts, text="Summarizer prompt template")
         sum_frame.pack(fill="both", expand=True, padx=8, pady=4)
 
@@ -277,7 +275,6 @@ class CodeSearchGUI(tk.Tk):
         self.summarizer_text = ScrolledText(sum_frame, wrap="word", height=10)
         self.summarizer_text.pack(fill="both", expand=True, padx=4, pady=4)
 
-        # Answer prompt
         chat_frame = ttk.LabelFrame(self.tab_prompts, text="Answer prompt template")
         chat_frame.pack(fill="both", expand=True, padx=8, pady=4)
 
@@ -459,7 +456,7 @@ class CodeSearchGUI(tk.Tk):
 
     def run_query(self):
         self.output_text.delete("1.0", "end")
-        self.last_metas = None
+        self.last_results = None
 
         index_dir = self.index_dir_var.get().strip()
         collection_name = self.collection_var.get().strip()
@@ -526,27 +523,33 @@ class CodeSearchGUI(tk.Tk):
         res = collection.query(
             query_embeddings=[q_embedding],
             n_results=top_k,
-            include=["documents", "metadatas"],
+            include=["documents", "metadatas", "distances"],
         )
 
         docs_list = res.get("documents", [[]])
         metas_list = res.get("metadatas", [[]])
+        dist_list = res.get("distances", [[]])
+
         if not docs_list or not docs_list[0]:
             self.append_output("[gui_query] No relevant snippets found in the index.")
             return
 
         docs = docs_list[0]
         metas = metas_list[0]
+        dists = dist_list[0]
 
-        self.last_metas = metas
+        self.last_results = [
+            {"meta": meta, "distance": dist}
+            for meta, dist in zip(metas, dists)
+        ]
         self.last_index_dir = index_dir
         self.last_repo_root = repo_root
 
         self.append_output("Using snippets from:")
-        for meta in metas:
+        for meta, dist in zip(metas, dists):
             path = meta.get("path", "<unknown>")
             chunk_idx = meta.get("chunk_index", "?")
-            self.append_output(f"  {path} (chunk {chunk_idx})")
+            self.append_output(f"  {path} (chunk {chunk_idx}, distance {dist:.4f})")
 
         self.append_output("")
         self.append_output("[gui_query] Asking LLM with retrieved context...")
@@ -562,7 +565,7 @@ class CodeSearchGUI(tk.Tk):
         self.append_output(answer)
 
     def show_files_window(self):
-        if not self.last_metas:
+        if not self.last_results:
             messagebox.showinfo("Info", "No query results available yet.")
             return
 
@@ -579,25 +582,29 @@ class CodeSearchGUI(tk.Tk):
         listbox = tk.Listbox(win, selectmode="browse")
         listbox.pack(fill="both", expand=True, padx=8, pady=4)
 
-        scrollbar = ttk.Scrollbar(listbox, orient="vertical", command=listbox.yview)
-        listbox.config(yscrollcommand=scrollbar.set)
+        files_for_rows = []
 
-        unique_paths = []
-        seen = set()
-        for meta in self.last_metas:
+        best_by_path = {}
+        for item in self.last_results:
+            meta = item["meta"]
+            dist = item["distance"]
             path = meta.get("path", "<unknown>")
-            if path not in seen:
-                seen.add(path)
-                unique_paths.append(path)
+            current = best_by_path.get(path)
+            if current is None or dist < current:
+                best_by_path[path] = dist
 
-        for p in unique_paths:
-            listbox.insert("end", p)
+        sorted_items = sorted(best_by_path.items(), key=lambda x: x[1])
+
+        for path, dist in sorted_items:
+            listbox.insert("end", f"{dist:.4f}  {path}")
+            files_for_rows.append(path)
 
         def on_open_selected(event=None):
             selection = listbox.curselection()
             if not selection:
                 return
-            rel_path = listbox.get(selection[0])
+            idx = selection[0]
+            rel_path = files_for_rows[idx]
 
             if repo_root:
                 full_path = os.path.join(repo_root, rel_path)
@@ -613,10 +620,10 @@ class CodeSearchGUI(tk.Tk):
             except Exception as e:
                 messagebox.showerror("Error", f"Could not open file:\n{e}")
 
+        listbox.bind("<Double-Button-1>", on_open_selected)
+
         open_btn = ttk.Button(win, text="Open selected file", command=on_open_selected)
         open_btn.pack(padx=8, pady=4)
-
-        listbox.bind("<Double-Button-1>", on_open_selected)
 
 
 def main():
