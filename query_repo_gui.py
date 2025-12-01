@@ -2,6 +2,9 @@
 import os
 import sys
 import textwrap
+import json
+import subprocess
+from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
@@ -17,6 +20,7 @@ CHAT_MODEL = "llama3.1"
 # Defaults
 DEFAULT_INDEX_DIR = os.path.expanduser("~/dev/indexes/commerce_customer_aeo")
 DEFAULT_COLLECTION = "repo_chunks_commerce_customer_aeo"
+DEFAULT_REPO_ROOT = os.path.expanduser("~/dev/repos/commerce-customer-aeo")
 DEFAULT_TOP_K = 16
 DEFAULT_MAX_DIRECT_EMBED_CHARS = 4000
 
@@ -52,7 +56,7 @@ def embed_text(text: str):
 
     embedding = data.get("embedding")
     if embedding is None:
-        print(f"[embed_text] No 'embedding' field in response: {data}", file=sys.stderr)
+        print(f"[embed_text] No 'embedding' field in response: {data}")
         return None
 
     return embedding
@@ -70,7 +74,6 @@ def summarize_query(long_text: str, template: str):
     if "<<BUG_TEXT>>" in template:
         user_content = template.replace("<<BUG_TEXT>>", long_text)
     else:
-        # Safe fallback if the placeholder was removed
         user_content = template + "\n\nBug text:\n" + long_text
 
     url = "http://localhost:11434/api/chat"
@@ -112,7 +115,7 @@ def chat_with_context(question: str, docs, metas, template: str):
     Call the chat model with the bug description and retrieved snippets.
 
     The template can contain the placeholders:
-        <<BUG_TEXT>>   replaced with the original question / bug text
+        <<BUG_TEXT>>   replaced with the original question or bug text
         <<SNIPPETS>>   replaced with the formatted snippets
     """
     context_parts = []
@@ -160,7 +163,10 @@ class CodeSearchGUI(tk.Tk):
         super().__init__()
         self.title("Local Code Query")
 
-        # Main notebook with two tabs
+        self.last_metas = None
+        self.last_index_dir = None
+        self.last_repo_root = None
+
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True)
 
@@ -173,11 +179,9 @@ class CodeSearchGUI(tk.Tk):
         self._build_query_tab()
         self._build_prompts_tab()
 
-        # Prefill prompt texts
         self._set_default_prompts()
 
     def _build_query_tab(self):
-        # Top frame for parameters
         params_frame = ttk.LabelFrame(self.tab_query, text="Parameters")
         params_frame.pack(fill="x", padx=8, pady=8)
 
@@ -186,32 +190,39 @@ class CodeSearchGUI(tk.Tk):
         self.index_dir_var = tk.StringVar(value=DEFAULT_INDEX_DIR)
         self.index_dir_entry = ttk.Entry(params_frame, textvariable=self.index_dir_var, width=60)
         self.index_dir_entry.grid(row=0, column=1, sticky="we", padx=4)
-        browse_btn = ttk.Button(params_frame, text="Browse", command=self.browse_index_dir)
-        browse_btn.grid(row=0, column=2, padx=4)
+        browse_idx_btn = ttk.Button(params_frame, text="Browse", command=self.browse_index_dir)
+        browse_idx_btn.grid(row=0, column=2, padx=4)
+
+        # Repo root
+        ttk.Label(params_frame, text="Repo root:").grid(row=1, column=0, sticky="w")
+        self.repo_root_var = tk.StringVar(value=DEFAULT_REPO_ROOT)
+        self.repo_root_entry = ttk.Entry(params_frame, textvariable=self.repo_root_var, width=60)
+        self.repo_root_entry.grid(row=1, column=1, sticky="we", padx=4)
+        browse_repo_btn = ttk.Button(params_frame, text="Browse", command=self.browse_repo_root)
+        browse_repo_btn.grid(row=1, column=2, padx=4)
 
         # Collection
-        ttk.Label(params_frame, text="Collection:").grid(row=1, column=0, sticky="w")
+        ttk.Label(params_frame, text="Collection:").grid(row=2, column=0, sticky="w")
         self.collection_var = tk.StringVar(value=DEFAULT_COLLECTION)
         self.collection_entry = ttk.Entry(params_frame, textvariable=self.collection_var, width=40)
-        self.collection_entry.grid(row=1, column=1, sticky="w", padx=4)
+        self.collection_entry.grid(row=2, column=1, sticky="w", padx=4)
 
         # Top K
-        ttk.Label(params_frame, text="Top K:").grid(row=2, column=0, sticky="w")
+        ttk.Label(params_frame, text="Top K:").grid(row=3, column=0, sticky="w")
         self.top_k_var = tk.StringVar(value=str(DEFAULT_TOP_K))
         self.top_k_entry = ttk.Entry(params_frame, textvariable=self.top_k_var, width=10)
-        self.top_k_entry.grid(row=2, column=1, sticky="w", padx=4)
+        self.top_k_entry.grid(row=3, column=1, sticky="w", padx=4)
 
         # Max chars before summarizing
-        ttk.Label(params_frame, text="Max chars before summarize:").grid(row=3, column=0, sticky="w")
+        ttk.Label(params_frame, text="Max chars before summarize:").grid(row=4, column=0, sticky="w")
         self.max_chars_var = tk.StringVar(value=str(DEFAULT_MAX_DIRECT_EMBED_CHARS))
         self.max_chars_entry = ttk.Entry(params_frame, textvariable=self.max_chars_var, width=10)
-        self.max_chars_entry.grid(row=3, column=1, sticky="w", padx=4)
+        self.max_chars_entry.grid(row=4, column=1, sticky="w", padx=4)
 
-        # Let the second column stretch
         params_frame.columnconfigure(1, weight=1)
 
         # Bug text frame
-        bug_frame = ttk.LabelFrame(self.tab_query, text="Bug / Question")
+        bug_frame = ttk.LabelFrame(self.tab_query, text="Bug or Question")
         bug_frame.pack(fill="both", expand=True, padx=8, pady=4)
 
         self.bug_text = ScrolledText(bug_frame, wrap="word", height=12)
@@ -220,7 +231,7 @@ class CodeSearchGUI(tk.Tk):
         btn_frame = ttk.Frame(bug_frame)
         btn_frame.pack(fill="x", padx=4, pady=4)
 
-        load_btn = ttk.Button(btn_frame, text="Load from file…", command=self.load_bug_from_file)
+        load_btn = ttk.Button(btn_frame, text="Load from file", command=self.load_bug_from_file)
         load_btn.pack(side="left")
 
         run_btn = ttk.Button(btn_frame, text="Run query", command=self.run_query)
@@ -230,13 +241,32 @@ class CodeSearchGUI(tk.Tk):
         output_frame = ttk.LabelFrame(self.tab_query, text="Output")
         output_frame.pack(fill="both", expand=True, padx=8, pady=4)
 
+        output_btn_frame = ttk.Frame(output_frame)
+        output_btn_frame.pack(fill="x", padx=4, pady=2)
+
+        save_output_btn = ttk.Button(output_btn_frame, text="Save output to file", command=self.save_output_to_file)
+        save_output_btn.pack(side="left")
+
+        view_files_btn = ttk.Button(output_btn_frame, text="View result files", command=self.show_files_window)
+        view_files_btn.pack(side="right")
+
         self.output_text = ScrolledText(output_frame, wrap="word", height=12, state="normal")
         self.output_text.pack(fill="both", expand=True, padx=4, pady=4)
 
     def _build_prompts_tab(self):
+        # Controls for load and save prompts
+        ctl_frame = ttk.Frame(self.tab_prompts)
+        ctl_frame.pack(fill="x", padx=8, pady=4)
+
+        load_prompts_btn = ttk.Button(ctl_frame, text="Load prompts from file", command=self.load_prompts_from_file)
+        load_prompts_btn.pack(side="left", padx=4)
+
+        save_prompts_btn = ttk.Button(ctl_frame, text="Save prompts to file", command=self.save_prompts_to_file)
+        save_prompts_btn.pack(side="left", padx=4)
+
         # Summarizer prompt
         sum_frame = ttk.LabelFrame(self.tab_prompts, text="Summarizer prompt template")
-        sum_frame.pack(fill="both", expand=True, padx=8, pady=8)
+        sum_frame.pack(fill="both", expand=True, padx=8, pady=4)
 
         sum_label = ttk.Label(
             sum_frame,
@@ -249,7 +279,7 @@ class CodeSearchGUI(tk.Tk):
 
         # Answer prompt
         chat_frame = ttk.LabelFrame(self.tab_prompts, text="Answer prompt template")
-        chat_frame.pack(fill="both", expand=True, padx=8, pady=8)
+        chat_frame.pack(fill="both", expand=True, padx=8, pady=4)
 
         chat_label = ttk.Label(
             chat_frame,
@@ -278,7 +308,7 @@ class CodeSearchGUI(tk.Tk):
           stack trace fragments, config keys, error codes, i18n string keys, table and column names,
           and SQL fragments.
         - Never remove or alter i18n keys, table or column names, or any text that looks like SQL.
-        - Remove obvious noise (timestamps, repeated identical lines, huge uninformative blobs).
+        - Remove obvious noise.
         - Length target: a few sentences or a short paragraph.
         - Do not invent new information.
         """).strip()
@@ -303,7 +333,7 @@ class CodeSearchGUI(tk.Tk):
         Relevant code and documentation snippets:
         <<SNIPPETS>>
 
-        Answer directly in terms of the bug, not as separate numbered questions.
+        Answer directly in terms of the bug.
         Separate clearly:
         - Facts that are directly supported by the snippets.
         - Hypotheses or guesses that go beyond the snippets.
@@ -316,6 +346,11 @@ class CodeSearchGUI(tk.Tk):
         path = filedialog.askdirectory(initialdir=self.index_dir_var.get() or os.path.expanduser("~"))
         if path:
             self.index_dir_var.set(path)
+
+    def browse_repo_root(self):
+        path = filedialog.askdirectory(initialdir=self.repo_root_var.get() or os.path.expanduser("~"))
+        if path:
+            self.repo_root_var.set(path)
 
     def load_bug_from_file(self):
         path = filedialog.askopenfilename(
@@ -339,11 +374,96 @@ class CodeSearchGUI(tk.Tk):
         self.output_text.see("end")
         self.update_idletasks()
 
+    def save_output_to_file(self):
+        content = self.output_text.get("1.0", "end-1c")
+        if not content.strip():
+            messagebox.showinfo("Info", "There is no output to save.")
+            return
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"query_output_{ts}.txt"
+        path = filedialog.asksaveasfilename(
+            title="Save output",
+            defaultextension=".txt",
+            initialfile=default_name,
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not save output:\n{e}")
+            return
+
+        messagebox.showinfo("Saved", f"Output saved to:\n{path}")
+
+    def load_prompts_from_file(self):
+        path = filedialog.askopenfilename(
+            title="Load prompts",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not load prompts:\n{e}")
+            return
+
+        summarizer = data.get("summarizer")
+        chat = data.get("chat")
+
+        if not isinstance(summarizer, str) or not isinstance(chat, str):
+            messagebox.showerror("Error", "Prompt file must be JSON with 'summarizer' and 'chat' string fields.")
+            return
+
+        self.summarizer_text.delete("1.0", "end")
+        self.summarizer_text.insert("1.0", summarizer)
+
+        self.chat_prompt_text.delete("1.0", "end")
+        self.chat_prompt_text.insert("1.0", chat)
+
+        messagebox.showinfo("Loaded", f"Prompts loaded from:\n{path}")
+
+    def save_prompts_to_file(self):
+        summarizer = self.summarizer_text.get("1.0", "end-1c")
+        chat = self.chat_prompt_text.get("1.0", "end-1c")
+
+        data = {
+            "summarizer": summarizer,
+            "chat": chat,
+        }
+
+        path = filedialog.asksaveasfilename(
+            title="Save prompts",
+            defaultextension=".json",
+            initialfile="prompts.json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not save prompts:\n{e}")
+            return
+
+        messagebox.showinfo("Saved", f"Prompts saved to:\n{path}")
+
     def run_query(self):
         self.output_text.delete("1.0", "end")
+        self.last_metas = None
 
         index_dir = self.index_dir_var.get().strip()
         collection_name = self.collection_var.get().strip()
+        repo_root = self.repo_root_var.get().strip()
         bug = self.bug_text.get("1.0", "end-1c").strip()
 
         if not index_dir:
@@ -372,7 +492,10 @@ class CodeSearchGUI(tk.Tk):
             messagebox.showerror("Error", f"Index directory does not exist:\n{index_dir}")
             return
 
-        # Connect to Chroma
+        if repo_root and not os.path.isdir(repo_root):
+            messagebox.showerror("Error", f"Repo root directory does not exist:\n{repo_root}")
+            return
+
         try:
             client = chromadb.PersistentClient(
                 path=index_dir,
@@ -386,7 +509,6 @@ class CodeSearchGUI(tk.Tk):
         self.append_output(f"[gui_query] Using index directory: {index_dir}")
         self.append_output(f"[gui_query] Using collection: {collection_name}")
 
-        # Summarize if needed
         query_for_embedding = bug
         if len(bug) > max_chars:
             self.append_output(f"[gui_query] Bug text is {len(bug)} chars, summarizing before embedding...")
@@ -416,6 +538,10 @@ class CodeSearchGUI(tk.Tk):
         docs = docs_list[0]
         metas = metas_list[0]
 
+        self.last_metas = metas
+        self.last_index_dir = index_dir
+        self.last_repo_root = repo_root
+
         self.append_output("Using snippets from:")
         for meta in metas:
             path = meta.get("path", "<unknown>")
@@ -434,6 +560,63 @@ class CodeSearchGUI(tk.Tk):
 
         self.append_output("\n=== ANSWER ===\n")
         self.append_output(answer)
+
+    def show_files_window(self):
+        if not self.last_metas:
+            messagebox.showinfo("Info", "No query results available yet.")
+            return
+
+        repo_root = self.last_repo_root or ""
+        win = tk.Toplevel(self)
+        win.title("Query result files")
+
+        info_label = ttk.Label(
+            win,
+            text=f"Repo root: {repo_root or '(not set, paths are relative)'}"
+        )
+        info_label.pack(fill="x", padx=8, pady=4)
+
+        listbox = tk.Listbox(win, selectmode="browse")
+        listbox.pack(fill="both", expand=True, padx=8, pady=4)
+
+        scrollbar = ttk.Scrollbar(listbox, orient="vertical", command=listbox.yview)
+        listbox.config(yscrollcommand=scrollbar.set)
+
+        unique_paths = []
+        seen = set()
+        for meta in self.last_metas:
+            path = meta.get("path", "<unknown>")
+            if path not in seen:
+                seen.add(path)
+                unique_paths.append(path)
+
+        for p in unique_paths:
+            listbox.insert("end", p)
+
+        def on_open_selected(event=None):
+            selection = listbox.curselection()
+            if not selection:
+                return
+            rel_path = listbox.get(selection[0])
+
+            if repo_root:
+                full_path = os.path.join(repo_root, rel_path)
+            else:
+                full_path = rel_path
+
+            if not os.path.isfile(full_path):
+                messagebox.showerror("Error", f"File does not exist:\n{full_path}")
+                return
+
+            try:
+                subprocess.Popen(["open", full_path])
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not open file:\n{e}")
+
+        open_btn = ttk.Button(win, text="Open selected file", command=on_open_selected)
+        open_btn.pack(padx=8, pady=4)
+
+        listbox.bind("<Double-Button-1>", on_open_selected)
 
 
 def main():
