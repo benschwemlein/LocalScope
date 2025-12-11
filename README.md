@@ -1,10 +1,38 @@
 
 
----
-
 # **Local RAG LLM**
 
 Local RAG LLM is a desktop application for running Retrieval Augmented Generation against any source code repository using only local models. The application indexes a repository into a vector database, retrieves relevant code snippets for any natural language question, and uses a local LLM to explain how the code works or why a problem occurs. All processing remains on your machine.
+
+---
+
+# Quick Start
+
+1. Install Python 3.10+
+
+2. Install Ollama and make sure it is running
+   [https://ollama.com/download](https://ollama.com/download)
+
+3. Clone this repo and install dependencies:
+
+   ```bash
+   git clone <your repo>
+   cd local-rag-llm
+   pip install -r requirements.txt
+   ```
+
+4. Start the application:
+
+   ```bash
+   python app.py
+   ```
+
+5. Go to the **Settings** tab
+   Confirm Ollama shows a **green status icon**, pick an embedding model and chat model, or download one from the dropdown.
+
+6. Go to the **Index** tab and index your repository.
+
+You are ready to query code.
 
 ---
 
@@ -14,25 +42,26 @@ Local RAG LLM provides two workflows:
 
 ### Indexing
 
-The application scans a repository, chunks each file, embeds the chunks using a local embedding model, and stores them in a ChromaDB index.
+The indexer scans a repository, chunks supported files, embeds the chunks using a local embedding model, and stores vectors in a ChromaDB index.
 
 ### Querying
 
-A user provides a question, bug report, log output, or general investigation text. The application embeds the text, retrieves the most relevant code chunks, and sends them along with the question to a local chat model for explanation.
+The user provides a question, bug report, log output, or general investigation text. The system embeds the text, retrieves the most relevant code chunks, and sends them along with the prompt to a local chat model for explanation.
 
 ---
 
 # Features
 
 * Fully local RAG pipeline
-* Vector search using ChromaDB
-* Embedding and chat models provided by Ollama
-* Semantic retrieval across code and documentation
-* Interactive GUI with tabs for Query, Indexing, Settings, and Prompts
-* Click-to-open file results
-* Editable prompt templates stored in JSON
-* Clear error handling and help text
-* No network communication beyond Ollama running locally
+* No cloud calls
+* Vector search powered by ChromaDB
+* Embedding and chat models served by Ollama
+* Interactive GUI with tabs for **Query**, **Indexing**, **Settings**, and **Prompts**
+* Clear model status indicator (green/red)
+* Download new models directly via dropdown
+* Selectable file types and excluded directories for indexing
+* Click result to open file in your OS
+* Editable prompts stored as JSON
 
 ---
 
@@ -40,8 +69,8 @@ A user provides a question, bug report, log output, or general investigation tex
 
 ### Python
 
-* Python 3.10 or later
-* Tkinter
+* Python 3.10+
+* Tkinter (included in most Python distributions)
 
 ### Python packages
 
@@ -51,40 +80,32 @@ pip install chromadb requests
 
 ### Ollama
 
-Download Ollama:
-[https://ollama.com/download](https://ollama.com/download)
+1. Install Ollama
+   [https://ollama.com/download](https://ollama.com/download)
 
-Install at least one embedding model and one chat model:
+2. Install at least one embedding model and one chat model:
 
 ```bash
 ollama pull nomic-embed-text
-ollama pull llama3.1
+ollama pull llama3.1:8b
 ```
 
-Ollama must be running at:
+3. Ensure Ollama is running (shows green in Settings tab):
 
 ```
 http://localhost:11434
 ```
 
-unless changed in the Settings tab.
-
 ---
 
 # Installation
 
-Clone the project and install dependencies:
+Clone the project:
 
 ```bash
 git clone <your repo>
 cd local-rag-llm
 pip install -r requirements.txt
-```
-
-If requirements.txt is not used:
-
-```bash
-pip install chromadb requests
 ```
 
 Run the application:
@@ -93,160 +114,190 @@ Run the application:
 python app.py
 ```
 
+This launches the full Tkinter GUI.
+
 ---
 
 # First Time Setup
 
-1. Confirm Ollama is installed:
+Open the **Settings** tab:
 
-```bash
-ollama list
-```
+### 1. Check Ollama status
 
-2. Open the Settings tab and select:
+A green ● indicator means Ollama is reachable.
+A red ● means it is not running or the URL is wrong.
 
-   * Ollama server URL
-   * Embedding model
-   * Chat model
+### 2. Select models
 
-3. Open the Index tab:
+Use the dropdowns to choose:
 
-   * Select a repository root
-   * Select or accept an index directory
-   * Click “Index Repository”
+* Embedding model
+* Chat model
 
-Once indexing completes, the repository is ready for semantic search.
+You may also download models using the **Download Model** dropdown button.
+
+### 3. Save changes
+
+Click **Apply Settings**.
 
 ---
 
 # Indexing a Repository
 
-The indexer walks the repository, skipping directories such as:
+Open the **Index** tab.
 
-* .git
-* node_modules
-* build
-* target
-* dist
+### Parameters include:
 
-Supported file types include:
+* Repository root directory
+* Index output directory
+* Collection name
+* Chunk size and overlap
+* Maximum file size
+* **Selectable file types** grouped by language ecosystem
+* **Excluded directories**, editable by the user
 
-* Java and Kotlin
-* JavaScript and TypeScript
-* HTML and CSS
-* JSON and YAML
-* Markdown and text files
+### Steps
 
-Large files are skipped for speed.
-Each file is split into overlapping text chunks, embedded, and stored with metadata including path and chunk index.
+1. Choose the repository you want to index
+2. Select the file types you care about
+3. Adjust excluded directories if needed
+4. Click **Index**
 
-Changing the embedding model requires re-indexing the repository.
+The indexer:
+
+* Walks the repository
+* Skips excluded directories such as:
+  `.git`, `node_modules`, `build`, `dist`, `target`, `.gradle`, virtual envs, caches
+* Reads only file types you selected
+* Splits files into overlapping chunks
+* Embeds each chunk with the local embedding model
+* Stores chunks and metadata in ChromaDB
+
+Re-index whenever you switch to a different embedding model.
 
 ---
 
 # Running Queries
 
-The Query tab includes settings for:
+Open the **Query** tab.
+
+You can configure:
 
 * Index directory
-* Repository root
-* Number of results to retrieve
-* Maximum characters before summarization
-* Input text (bug report, logs, question)
-* Response output area
+* Repository root (optional, for file opening)
+* Number of snippets to retrieve
+* Maximum characters for summarization
+* The question / bug report text
+* Output display mode
 
-Steps:
+### Steps
 
-1. Enter or paste your text
-2. Click “Run Query”
+1. Type or paste your investigation text
+2. Click **Run Query**
 
-The application:
+The engine:
 
-* Summarizes long text using the Summarizer prompt
-* Embeds the summarized text
-* Retrieves the top results from the vector index
-* Sends the question and snippets to the LLM
-* Displays the explanation in the Response section
+1. Summarizes long input using your Summarizer prompt
+2. Embeds the summarized text
+3. Retrieves the top matching code chunks
+4. Injects snippets and your question into the Chat prompt
+5. Runs your local LLM to produce an answer
+6. Displays the result with clickable file paths
 
 ---
 
 # Prompts
 
-Prompts control how the models interpret your input.
-
-Two prompts are used:
+Two prompt templates drive the workflow:
 
 ### Summarizer Prompt
 
-Reduces long investigation text into a short semantic query. Must contain `<<BUG_TEXT>>`.
+Condenses long text into a search query.
+Must contain:
+
+```
+<<BUG_TEXT>>
+```
 
 ### Chat Prompt
 
-Explains retrieved code, describes system behavior, identifies possible root causes, and separates evidence from hypothesis. Must contain both `<<BUG_TEXT>>` and `<<SNIPPETS>>`.
+Produces the final explanation.
+Must contain:
 
-Prompts can be edited, saved, or loaded from JSON.
-If either prompt is empty, the application will not run queries.
+```
+<<BUG_TEXT>>
+<<SNIPPETS>>
+```
+
+Prompts are editable, savable, loadable, and validated before running queries.
 
 ---
 
 # Settings
 
-The Settings tab controls:
+The **Settings** tab includes:
 
-* Ollama server URL
-* Embedding model name (dropdown)
-* Chat model name (dropdown)
-
-Each setting includes a help button explaining its purpose and linking to the Ollama download page if models are missing.
-
-The embedding model determines vector index compatibility.
-The chat model affects the quality and depth of explanations.
+* Ollama URL
+* Model status indicator (green/red)
+* Embedding model dropdown
+* Chat model dropdown
+* **Download Model** button with a curated dropdown list
+* Refresh models
+* Apply settings
 
 ---
 
 # Opening Files
 
-After a query, the application lists files grouped by relevance.
-Double-clicking a file opens it using:
+After a query, results show:
 
-* `open` on macOS
-* `start` on Windows
-* `xdg-open` on Linux
+* File path
+* Snippet
+* Relevance score
 
-If a repository root is specified, paths resolve relative to it.
+Double-clicking a result opens the file using:
+
+* macOS → `open`
+* Windows → `start`
+* Linux → `xdg-open`
+
+When a repository root is set, paths resolve relative to it.
 
 ---
 
-# Tips for Effective Use
+# Tips for Best Results
 
-* Provide detailed input text for more accurate retrieval
-* Keep prompts explicit about what information matters
-* Retrieve 8–16 results for debugging
-* Retrieve 20–30 results when exploring unfamiliar code
-* Re-index if you change the embedding model
-* Ensure Ollama is running before launching the application
+* Include logs, stack traces, symptoms, and environment details
+* Increase `number of results` for complex issues
+* Keep prompts explicit and stable
+* Re-index after changing embedding models
+* Ensure Ollama is running before starting queries or indexing
 
 ---
 
 # Troubleshooting
 
-### No models appear in Settings
+### Ollama shows red
 
-Ollama is not running or the server URL is incorrect.
+Ollama is not running or the URL is wrong.
 
-### Embeddings fail
+### No embedding model available
 
-The embedding model is missing or named incorrectly.
+Use the **Download Model** dropdown or run:
 
-### No results in query
+```bash
+ollama pull nomic-embed-text
+```
 
-The index directory is incorrect or the repository has not been indexed.
+### Query produces no results
 
-### File fails to open
+Index directory is incorrect or has not been built.
 
-The repository root is wrong or files have moved.
+### File paths fail to open
 
-### Query does not run
+Repository root is incorrect or files moved.
+
+### Query fails to start
 
 Summarizer or Chat prompt is empty.
 
@@ -274,5 +325,4 @@ local-rag-llm/
   README.md
 ```
 
----
 
