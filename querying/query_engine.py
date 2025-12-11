@@ -1,7 +1,4 @@
-# querying/query_engine.py
-
 import os
-import sys
 from typing import Callable, Any
 
 import requests
@@ -14,16 +11,10 @@ from config import (
     CHAT_MODEL,
 )
 
-
 LogFn = Callable[[str], Any]
 
 
 def _embed_text(text: str, log: LogFn) -> list[float] | None:
-    """
-    Ask Ollama for an embedding of a single text chunk or query.
-
-    Returns the embedding list or None on error.
-    """
     url = f"{OLLAMA_URL.rstrip('/')}/api/embeddings"
     payload = {"model": EMBED_MODEL, "prompt": text}
 
@@ -56,11 +47,6 @@ def _embed_text(text: str, log: LogFn) -> list[float] | None:
 
 
 def _summarize_query(long_text: str, template: str, log: LogFn) -> str:
-    """
-    Use the chat LLM to rewrite a long bug or log into a compact semantic query.
-
-    If there is an error, we fall back to the original long_text.
-    """
     if "<<BUG_TEXT>>" in template:
         user_content = template.replace("<<BUG_TEXT>>", long_text)
     else:
@@ -99,9 +85,6 @@ def _summarize_query(long_text: str, template: str, log: LogFn) -> str:
 
 
 def _chat_with_context(question: str, docs, metas, template: str, log: LogFn) -> str:
-    """
-    Call the chat model with the bug description and retrieved snippets.
-    """
     context_parts = []
     for i, (doc, meta) in enumerate(zip(docs, metas), 1):
         path = meta.get("path", "<unknown>")
@@ -143,12 +126,6 @@ def _chat_with_context(question: str, docs, metas, template: str, log: LogFn) ->
 
 
 def _compute_relative_scores(distances: list[float]) -> list[float]:
-    """
-    Compute per query relative scores 0 to 100.
-
-    Smallest distance -> 100
-    Largest distance  -> 0
-    """
     if not distances:
         return []
 
@@ -181,17 +158,6 @@ def run_query(
 ) -> dict:
     """
     Core query workflow, separated from GUI.
-
-    Returns a dict with:
-        {
-            "answer": str,
-            "docs": list[str],
-            "metas": list[dict],
-            "distances": list[float],
-            "scores": list[float],
-        }
-
-    Raises exceptions on error; caller (GUI) should catch and show messagebox.
     """
     if not index_dir:
         raise ValueError("Index directory is required.")
@@ -234,7 +200,6 @@ def run_query(
 
     log(f"[query_engine] Using index directory: {index_dir}")
 
-    # Possibly summarize
     query_for_embedding = bug
     if len(bug) > max_chars:
         log(f"[query_engine] Bug text is {len(bug)} chars, summarizing before embedding...")

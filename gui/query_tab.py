@@ -1,5 +1,3 @@
-# gui/query_tab.py
-
 import os
 import sys
 import textwrap
@@ -90,9 +88,6 @@ class QueryTab(ttk.Frame):
 
         get_summarizer_prompt() -> str
         get_chat_prompt() -> str
-
-    Often these will read from text areas in the Prompts tab.
-    If they return an empty string, this tab falls back to built in defaults.
     """
 
     def __init__(self, parent, get_summarizer_prompt, get_chat_prompt):
@@ -153,29 +148,25 @@ class QueryTab(ttk.Frame):
         run_btn = ttk.Button(btn_frame, text="Run query", command=self.run_query)
         run_btn.pack(side="right")
 
-        output_frame = ttk.LabelFrame(self, text="Output")
+        # Single combined response area
+        output_frame = ttk.LabelFrame(self, text="Response")
         output_frame.pack(fill="both", expand=True, padx=8, pady=4)
 
-        output_btn_frame = ttk.Frame(output_frame)
-        output_btn_frame.pack(fill="x", padx=4, pady=2)
+        self.response_text = ScrolledText(output_frame, wrap="word", height=16, state="normal")
+        self.response_text.pack(fill="both", expand=True, padx=4, pady=4)
 
-        save_output_btn = ttk.Button(output_btn_frame, text="Save log to file", command=self.save_output_to_file)
+        output_btn_frame = ttk.Frame(self)
+        output_btn_frame.pack(fill="x", padx=8, pady=(0, 4))
+
+        save_output_btn = ttk.Button(
+            output_btn_frame,
+            text="Save response to file",
+            command=self.save_output_to_file,
+        )
         save_output_btn.pack(side="left")
 
         view_files_btn = ttk.Button(output_btn_frame, text="View result files", command=self.show_files_window)
         view_files_btn.pack(side="right")
-
-        summary_frame = ttk.LabelFrame(output_frame, text="Summary / Answer")
-        summary_frame.pack(fill="both", expand=True, padx=4, pady=(4, 2))
-
-        self.summary_text = ScrolledText(summary_frame, wrap="word", height=8, state="normal")
-        self.summary_text.pack(fill="both", expand=True, padx=4, pady=4)
-
-        log_frame = ttk.LabelFrame(output_frame, text="Log")
-        log_frame.pack(fill="both", expand=True, padx=4, pady=(2, 4))
-
-        self.output_text = ScrolledText(log_frame, wrap="word", height=8, state="normal")
-        self.output_text.pack(fill="both", expand=True, padx=4, pady=4)
 
     def browse_index_dir(self):
         path = filedialog.askdirectory(initialdir=self.index_dir_var.get() or os.path.expanduser("~"))
@@ -205,20 +196,20 @@ class QueryTab(ttk.Frame):
         self.bug_text.insert("1.0", content)
 
     def append_output(self, text: str):
-        self.output_text.insert("end", text + "\n")
-        self.output_text.see("end")
+        self.response_text.insert("end", text + "\n")
+        self.response_text.see("end")
         self.update_idletasks()
 
     def save_output_to_file(self):
-        content = self.output_text.get("1.0", "end-1c")
+        content = self.response_text.get("1.0", "end-1c")
         if not content.strip():
-            messagebox.showinfo("Info", "There is no log content to save.")
+            messagebox.showinfo("Info", "There is no response content to save.")
             return
 
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_name = f"query_log_{ts}.txt"
+        default_name = f"query_response_{ts}.txt"
         path = filedialog.asksaveasfilename(
-            title="Save log",
+            title="Save response",
             defaultextension=".txt",
             initialfile=default_name,
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
@@ -230,15 +221,14 @@ class QueryTab(ttk.Frame):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
         except Exception as e:
-            messagebox.showerror("Error", f"Could not save log:\n{e}")
+            messagebox.showerror("Error", f"Could not save response:\n{e}")
             return
 
-        messagebox.showinfo("Saved", f"Log saved to:\n{path}")
+        messagebox.showinfo("Saved", f"Response saved to:\n{path}")
 
     def run_query(self):
-        # Clear both summary and log
-        self.output_text.delete("1.0", "end")
-        self.summary_text.delete("1.0", "end")
+        # Clear response and last results
+        self.response_text.delete("1.0", "end")
         self.last_results = None
 
         index_dir = self.index_dir_var.get().strip()
@@ -288,10 +278,6 @@ class QueryTab(ttk.Frame):
         self.last_index_dir = index_dir
         self.last_repo_root = repo_root
 
-        # Show answer
-        self.summary_text.insert("1.0", answer)
-        self.summary_text.see("1.0")
-
         self.append_output("\n=== ANSWER ===\n")
         self.append_output(answer)
 
@@ -315,7 +301,6 @@ class QueryTab(ttk.Frame):
 
         files_for_rows: list[str] = []
 
-        # Aggregate best score per file, plus counts
         best_by_path: dict[str, float] = {}
         counts_by_path: dict[str, int] = {}
 
