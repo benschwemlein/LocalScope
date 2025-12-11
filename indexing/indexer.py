@@ -11,7 +11,7 @@ INDEX_EXTS = {
     ".js", ".jsx",
     ".html", ".css", ".scss",
     ".md", ".rst", ".adoc", ".txt",
-    ".yml", ".yaml", ".json",
+    ".yml", ".yaml", ".json", ".py"
 }
 
 MAX_FILE_BYTES = 500_000
@@ -19,9 +19,9 @@ CHARS_PER_CHUNK = 1200
 CHUNK_OVERLAP = 200
 
 
-def should_index_file(path: str) -> bool:
+def should_index_file(path: str, index_exts: set[str]) -> bool:
     _, ext = os.path.splitext(path)
-    return ext.lower() in INDEX_EXTS
+    return ext.lower() in index_exts
 
 
 def chunk_text(text: str, max_len: int, overlap: int):
@@ -55,17 +55,26 @@ def index_repo(
     repo_root: str,
     index_dir: str | None = None,
     collection_name: str | None = None,
+    index_exts: set[str] | None = None,
+    max_file_bytes: int = MAX_FILE_BYTES,
+    chars_per_chunk: int = CHARS_PER_CHUNK,
+    chunk_overlap: int = CHUNK_OVERLAP,
     log=print,
 ):
     repo_root = os.path.abspath(repo_root)
     index_dir = index_dir or config.DEFAULT_INDEX_DIR
     collection_name = collection_name or config.DEFAULT_COLLECTION_NAME
+    index_exts = index_exts or INDEX_EXTS
 
     log(f"Indexing repo at {repo_root}")
     log(f"Using Chroma index directory: {index_dir}")
     log(f"Using collection name: {collection_name}")
     log(f"Using Ollama URL: {config.OLLAMA_URL}")
     log(f"Using embed model: {config.EMBED_MODEL}")
+    log(f"Max file size (bytes): {max_file_bytes}")
+    log(f"Chars per chunk: {chars_per_chunk}")
+    log(f"Chunk overlap: {chunk_overlap}")
+    log(f"File types: {', '.join(sorted(index_exts))}")
 
     client = chromadb.PersistentClient(
         path=index_dir,
@@ -96,11 +105,11 @@ def index_repo(
 
         for fname in files:
             full = os.path.join(root, fname)
-            if not should_index_file(full):
+            if not should_index_file(full, index_exts):
                 continue
 
             try:
-                if os.path.getsize(full) > MAX_FILE_BYTES:
+                if os.path.getsize(full) > max_file_bytes:
                     continue
             except OSError:
                 continue
@@ -115,7 +124,7 @@ def index_repo(
                 continue
 
             rel = os.path.relpath(full, repo_root)
-            chunks = chunk_text(text, CHARS_PER_CHUNK, CHUNK_OVERLAP)
+            chunks = chunk_text(text, chars_per_chunk, chunk_overlap)
 
             for idx, chunk in enumerate(chunks):
                 embedding = embed_text(chunk)

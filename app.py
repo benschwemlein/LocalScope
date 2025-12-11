@@ -13,7 +13,7 @@ class CodeSearchApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Local RAG LLM")
-        self.minsize(1800, 1200)
+        self.minsize(1200, 900)
 
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True)       
