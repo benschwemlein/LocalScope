@@ -1,6 +1,3 @@
-Here is the full license with Section 5 fully corrected, the commercial use rule properly indexed as item g, and all indentation consistent. No dashes used. No extra commentary.
-
----
 
 # Local RAG LLM License Agreement
 
@@ -82,6 +79,4 @@ This License Agreement governs the use of the software application named Local R
 Ben Schwemlein
 Email: [benschwemlein@gmail.com](mailto:benschwemlein@gmail.com)
 
----
 
-If you want this converted into a GitHub LICENSE file, an install EULA, or a PDF, I can generate that.
