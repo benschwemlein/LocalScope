@@ -234,8 +234,13 @@ class SettingsTab(ttk.Frame):
                 "The app calls:\n"
                 "  {URL}/api/embeddings  for embeddings\n"
                 "  {URL}/api/chat        for chat completions\n\n"
-                "Change this if Ollama is listening on a different host or port,"
-                " then click Refresh models to reload the list from that instance."
+                "If you do not have Ollama installed, download it from:\n"
+                "  https://ollama.com/download\n\n"
+                "After installing and starting Ollama, leave the URL as\n"
+                "  http://localhost:11434\n"
+                "unless you have configured Ollama to listen elsewhere.\n\n"
+                "If you change the URL, click Refresh models to reload the\n"
+                "model list from that instance."
             ),
         )
 
@@ -263,7 +268,9 @@ class SettingsTab(ttk.Frame):
                 "Examples:\n"
                 "  nomic-embed-text\n"
                 "  all-minilm\n\n"
-                "The same embedding model must be used for both indexing and querying."
+                "The same embedding model must be used for both indexing and querying.\n"
+                "You can see installed models in the Ollama app or by running:\n"
+                "  ollama list"
             )
 
         messagebox.showinfo("Embedding model", text)
@@ -294,7 +301,9 @@ class SettingsTab(ttk.Frame):
                 "  llama3\n"
                 "  qwen2.5\n\n"
                 "You can switch this without re indexing, because embeddings do not\n"
-                "depend on the chat model."
+                "depend on the chat model.\n"
+                "You can see installed models by running:\n"
+                "  ollama list"
             )
 
         messagebox.showinfo("Chat model", text)
