@@ -266,7 +266,7 @@ class IndexTab(ttk.Frame):
             return
 
         repo_root = self.repo_root_var.get().strip()
-        index_dir = self.index_dir_var.get().strip()
+        index_base_dir = self.index_dir_var.get().strip()
         collection_name = self.collection_var.get().strip()
 
         if not repo_root:
@@ -275,6 +275,15 @@ class IndexTab(ttk.Frame):
         if not os.path.isdir(repo_root):
             messagebox.showerror("Error", f"Repo root does not exist:\n{repo_root}")
             return
+        if not index_base_dir:
+            messagebox.showerror("Error", "Index directory is required.")
+            return
+        if not collection_name:
+            messagebox.showerror("Error", "Collection name is required.")
+            return
+
+        # Actual folder where this collection will live, named from the GUI
+        index_dir = os.path.join(index_base_dir, collection_name)
 
         # Parse numeric parameters
         try:
@@ -309,7 +318,7 @@ class IndexTab(ttk.Frame):
             try:
                 index_repo(
                     repo_root=repo_root,
-                    index_dir=index_dir,
+                    index_dir=index_dir,          # now includes the name from the GUI
                     collection_name=collection_name,
                     index_exts=selected_exts,
                     max_file_bytes=max_file_bytes,
