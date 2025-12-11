@@ -45,55 +45,48 @@ These restrictions do not prohibit normal internal experimentation, exploration 
 
 You are responsible for ensuring that you have the legal right to process any code, data, or other material with Local RAG LLM. Ben Schwemlein does not assume responsibility for any data you provide or process with the software.
 
-## Trademark
+6. User Data Responsibility
+   You are solely responsible for ensuring you have the legal right to process any code, data, or other material with Local RAG LLM.
+   Ben Schwemlein does not assume responsibility for data you provide or process with the software.
 
-This Agreement does not grant permission to use the Local RAG LLM name, logo, or branding.
+7. Trademark
+   This Agreement does not grant permission to use the Local RAG LLM name, logo, or branding.
 
-## Confidentiality
+8. Confidentiality
+   The software may contain code, algorithms, and documentation that are confidential or proprietary. You agree not to disclose, publish, or share the software or its design with any third party except as allowed by this Agreement.
 
-The software may contain code, algorithms, and documentation that are confidential or proprietary. You agree not to disclose or publish the software or its design except as allowed by this Agreement.
+9. No Warranty
+   Local RAG LLM is provided as is with no warranties of any kind. There is no warranty of fitness for a particular purpose, merchantability, accuracy of results, or noninfringement. You use the software at your own risk.
 
-## No Warranty
+10. Limitation of Liability
+    To the maximum extent permitted by law, in no event will Ben Schwemlein be liable for any damages arising out of or related to the use of or inability to use the software. This includes direct, indirect, incidental, special, exemplary, and consequential damages.
 
-Local RAG LLM is provided as is with no warranties of any kind. There is no warranty of fitness for a particular purpose, merchantability, accuracy of results, or noninfringement. You use the software at your own risk.
+11. Indemnity
+    You agree to indemnify and hold harmless Ben Schwemlein from any claim, loss, liability, damage, cost, or expense including attorney fees arising out of your use of the software or your violation of this Agreement.
 
-## Limitation of Liability
+12. Termination and Survival
+    This license is effective until terminated. It will terminate automatically without notice if you violate any term of this Agreement.
+    Upon termination you must stop using the software and delete all copies in your possession.
+    The following sections survive termination
+    Ownership, Restrictions, Confidentiality, User Data Responsibility, No Warranty, Limitation of Liability, Indemnity, Governing Law, Severability, No Waiver.
 
-To the maximum extent permitted by law, Ben Schwemlein is not liable for any damages arising out of the use or inability to use the software. This includes direct, indirect, incidental, special, exemplary, and consequential damages.
+13. Severability
+    If any provision of this Agreement is held invalid the remaining provisions remain in full force.
 
-## Indemnity
+14. No Waiver
+    Failure to enforce any provision of this Agreement does not waive that provision.
 
-You agree to indemnify and hold harmless Ben Schwemlein from any claim, loss, liability, damage, cost, or expense including attorney fees arising out of your use of the software or your violation of this Agreement.
+15. Modification of License
+    Ben Schwemlein may modify this Agreement at any time. Any updated version applies to any new copy or version of the software that you download or install. Continued use of the software after publication of an updated Agreement constitutes acceptance of the updated terms.
 
-## Termination and Survival
+16. Governing Law and Venue
+    This Agreement is governed by the laws of the State of Ohio. Any dispute arising out of or relating to this Agreement or the software will be brought exclusively in the state or federal courts located in Ohio.
 
-This license is effective until terminated. It will terminate automatically if you violate any term of this Agreement. Upon termination you must stop using the software and delete all copies in your possession.
+17. Entire Agreement
+    This Agreement is the complete and exclusive statement of the understanding between you and Ben Schwemlein regarding Local RAG LLM.
 
-The following sections survive termination: Ownership, Restrictions, Confidentiality, User Data Responsibility, No Warranty, Limitation of Liability, Indemnity, Governing Law, Severability, No Waiver.
-
-## Severability
-
-If any provision of this Agreement is held invalid the remaining provisions remain in full force.
-
-## No Waiver
-
-Failure to enforce any provision does not waive that provision.
-
-## Modification of License
-
-Ben Schwemlein may modify this Agreement at any time. Any updated version applies to any new copy or version of the software that you download or install. Continued use after publication of an updated Agreement constitutes acceptance of the updated terms.
-
-## Governing Law and Venue
-
-This Agreement is governed by the laws of the State of Ohio. Any dispute will be brought exclusively in the state or federal courts located in Ohio.
-
-## Entire Agreement
-
-This Agreement is the complete and exclusive statement of the understanding between you and Ben Schwemlein regarding Local RAG LLM.
-
-## Contact Information
-
-For permissions or legal matters contact
+18. Contact Information
+    For permissions or legal matters contact
 
 Ben Schwemlein
 Email: [benschwemlein@gmail.com](mailto:benschwemlein@gmail.com)
