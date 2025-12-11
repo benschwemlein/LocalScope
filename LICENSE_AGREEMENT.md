@@ -7,7 +7,7 @@ This License Agreement governs the use of the software application named Local R
 
 1. Scope of Agreement
    This Agreement covers the Local RAG LLM software as implemented and delivered by Ben Schwemlein.
-   This Agreement does not claim ownership of or place restrictions on general architectural patterns, techniques, or concepts commonly found in similar products.
+   This Agreement does not claim ownership of or place restrictions on general architectural patterns, techniques, or concepts commonly found in similar products.  It does not claim ownership on the use of Ollama or it's models.
    Only the specific implementation, code, design, and related intellectual property of Local RAG LLM are covered by this License.
 
 2. Local Use Only and Hosting Restriction
