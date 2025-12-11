@@ -10,7 +10,7 @@ from gui.index_tab import IndexTab
 class CodeSearchApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Local Code Query")
+        self.title("Local RAG LLM")
 
         # Optional: minimum size
         self.minsize(900, 600)
@@ -40,6 +40,10 @@ class CodeSearchApp(tk.Tk):
         # Index tab: runs repo indexing
         index_tab = IndexTab(notebook)
         notebook.add(index_tab, text="Index")
+
+
+        # Select Query tab by default
+        notebook.select(query_tab)
 
 
 def main():
