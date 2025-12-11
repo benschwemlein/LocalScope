@@ -8,12 +8,18 @@ Local RAG LLM is a desktop application for running Retrieval Augmented Generatio
 
 # Quick Start
 
-1. Install Python 3.10+
+1. Install **Python 3.10+**
 
-2. Install Ollama and make sure it is running
-   [https://ollama.com/download](https://ollama.com/download)
+2. Install Python dependencies:
 
-3. Clone this repo and install dependencies:
+   ```bash
+   pip install chromadb requests
+   ```
+
+3. Install **Ollama** and make sure it is running  
+   https://ollama.com/download
+
+4. Clone this repo:
 
    ```bash
    git clone <your repo>
@@ -21,16 +27,17 @@ Local RAG LLM is a desktop application for running Retrieval Augmented Generatio
    pip install -r requirements.txt
    ```
 
-4. Start the application:
+5. Start the application:
 
    ```bash
    python app.py
    ```
 
-5. Go to the **Settings** tab
-   Confirm Ollama shows a **green status icon**, pick an embedding model and chat model, or download one from the dropdown.
+6. Open the **Settings** tab  
+   Confirm Ollama shows a **green status icon**, select embedding and chat models, or download one from the dropdown.
 
-6. Go to the **Index** tab and index your repository.
+7. Open the **Index** tab and index your repository.
+
 
 You are ready to query code.
 
