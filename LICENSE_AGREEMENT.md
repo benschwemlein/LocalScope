@@ -7,7 +7,7 @@ This License Agreement governs the use of the software application named Local R
 
 ## Scope of Agreement
 
-This Agreement covers the Local RAG LLM software as implemented and delivered by Ben Schwemlein. This Agreement does not claim ownership of or place restrictions on general architectural patterns, techniques, or concepts found in similar products. It does not claim ownership of the use of Ollama or its models. Only the specific implementation, code, design, and related intellectual property of Local RAG LLM are covered by this License.
+This Agreement covers the Local RAG LLM software as implemented and delivered by Ben Schwemlein. This Agreement does not claim ownership of or place restrictions on general architectural patterns, techniques, or concepts found in similar products. It does not claim ownership or place restrictions of the use of Ollama or its models. Only the specific implementation, code, design, and related intellectual property of Local RAG LLM are covered by this License.
 
 ## Local Use Only and Hosting Restriction
 
@@ -33,17 +33,15 @@ You agree that you will not do any of the following.
 
 a. Use the software to create a new product or version that replaces or supersedes this Agreement or attempts to avoid its terms.
 
-b. Provide the software to any external company, employer, or organization unless you have explicit written permission or a GitHub invitation from Ben Schwemlein.
+b. Provide the software to any external company, employer, or organization unless you have explicit permission from Ben Schwemlein.
 
 c. Distribute, sell, lease, rent, or make the software available to third parties except as allowed under this Agreement.
 
 d. Sublicense the software or grant any rights in it to another person or entity.
 
-e. Reverse engineer, decompile, or disassemble the software except where required by law and only after giving prior written notice to Ben Schwemlein.
+e. Remove or alter any copyright notices, author attributions, or license notices.
 
-f. Remove or alter any copyright notices, author attributions, or license notices.
-
-g. Use the software for any commercial purpose on behalf of an external organization unless a separate signed agreement with Ben Schwemlein has been executed.
+f. Use the software for any commercial purpose unless a separate signed agreement with Ben Schwemlein has been executed.
 
 These restrictions do not prohibit normal internal experimentation, exploration of the code, issue reporting, or informal collaboration.
 
