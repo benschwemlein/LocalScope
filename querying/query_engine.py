@@ -1,4 +1,6 @@
 import os
+import json
+import threading
 from typing import Callable, Any
 
 import requests
@@ -81,10 +83,17 @@ def _summarize_query(long_text: str, template: str, log: LogFn) -> str:
     return summary
 
 
-def _chat_with_context(question: str, docs, metas, template: str, log: LogFn) -> str:
+def _chat_with_context(
+    question: str,
+    docs,
+    metas,
+    template: str,
+    log: LogFn,
+    token_callback: Callable[[str], None] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> str:
     context_parts = []
     for i, (doc, meta) in enumerate(zip(docs, metas), 1):
-        # FIXED: Changed from "path" to "source" to match indexer metadata
         path = meta.get("source", meta.get("path", "<unknown>"))
         chunk_idx = meta.get("chunk_index", "?")
         header = f"[Snippet {i} from {path} chunk {chunk_idx}]"
@@ -106,21 +115,44 @@ def _chat_with_context(question: str, docs, metas, template: str, log: LogFn) ->
     url = f"{config.OLLAMA_URL.rstrip('/')}/api/chat"
     payload = {
         "model": config.CHAT_MODEL,
-        "messages": [
-            {"role": "user", "content": prompt},
-        ],
-        "stream": False,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": token_callback is not None,
         "options": {"temperature": 0.0},
     }
 
-    resp = requests.post(url, json=payload)
+    resp = requests.post(url, json=payload, stream=token_callback is not None)
     if not resp.ok:
         log(f"[chat_with_context] Ollama returned {resp.status_code}")
         log(f"[chat_with_context] Body (first 400 chars): {resp.text[:400]!r}")
         resp.raise_for_status()
 
-    data = resp.json()
-    return data["message"]["content"].strip()
+    if token_callback is None:
+        data = resp.json()
+        return data["message"]["content"].strip()
+
+    # Streaming: yield tokens to callback, check cancel between each
+    full_text = []
+    try:
+        for line in resp.iter_lines():
+            if cancel_event and cancel_event.is_set():
+                resp.close()
+                return "".join(full_text)
+            if not line:
+                continue
+            try:
+                chunk = json.loads(line)
+            except ValueError:
+                continue
+            token = chunk.get("message", {}).get("content", "")
+            if token:
+                full_text.append(token)
+                token_callback(token)
+            if chunk.get("done"):
+                break
+    except Exception as e:
+        log(f"[chat_with_context] Streaming error: {e}")
+
+    return "".join(full_text)
 
 
 def _compute_relative_scores(distances: list[float]) -> list[float]:
@@ -147,12 +179,14 @@ def _compute_relative_scores(distances: list[float]) -> list[float]:
 def run_query(
     bug_text: str,
     index_dir: str | None = None,
-    repo_root: str | None = None,  # Added to match GUI call
+    repo_root: str | None = None,
     top_k: int = 12,
     max_chars: int = 4000,
     summarizer_template: str = "",
     chat_template: str = "",
     log: LogFn = print,
+    cancel_event: threading.Event | None = None,
+    token_callback: Callable[[str], None] | None = None,
 ):
     """
     Run a query against the ChromaDB index using Ollama embeddings and chat.
@@ -195,10 +229,18 @@ def run_query(
     log(f"[query_engine] Using chat model: {config.CHAT_MODEL}")
     log(f"[query_engine] Using Ollama URL: {config.OLLAMA_URL}")
 
+    def _cancelled():
+        return cancel_event is not None and cancel_event.is_set()
+
     query_for_embedding = bug
     if len(bug) > max_chars:
+        if _cancelled():
+            raise RuntimeError("Cancelled.")
         log(f"[query_engine] Bug text is {len(bug)} chars, summarizing before embedding...")
         query_for_embedding = _summarize_query(bug, summarizer_template, log)
+
+    if _cancelled():
+        raise RuntimeError("Cancelled.")
 
     log("[query_engine] Embedding query text...")
     q_embedding = _embed_text(query_for_embedding, log)
@@ -258,10 +300,19 @@ def run_query(
         log("[query_engine] WARNING: All retrieved snippets have very low relative scores.")
         log("[query_engine] The answer may rely mostly on the bug text and not on code context.")
 
+    if _cancelled():
+        raise RuntimeError("Cancelled.")
+
     log("")
     log("[query_engine] Asking LLM with retrieved context...")
+    if token_callback:
+        log("\n=== ANSWER ===\n")
 
-    answer = _chat_with_context(bug, docs, metas, chat_template, log)
+    answer = _chat_with_context(
+        bug, docs, metas, chat_template, log,
+        token_callback=token_callback,
+        cancel_event=cancel_event,
+    )
 
     return {
         "answer": answer,

@@ -54,6 +54,7 @@ class QueryTab(ttk.Frame):
         self.last_repo_root = None
 
         self._current_thread = None
+        self._cancel_event = None
         self._loading_ui = True
 
         self._build_query_tab()
@@ -124,6 +125,9 @@ class QueryTab(ttk.Frame):
 
         load_btn = ttk.Button(btn_frame, text="Load from file", command=self.load_bug_from_file)
         load_btn.pack(side="left")
+
+        self.cancel_btn = ttk.Button(btn_frame, text="Cancel", command=self._cancel_query, state="disabled")
+        self.cancel_btn.pack(side="right", padx=(4, 0))
 
         self.run_btn = ttk.Button(btn_frame, text="Run query", command=self.run_query)
         self.run_btn.pack(side="right")
@@ -305,6 +309,12 @@ class QueryTab(ttk.Frame):
 
         messagebox.showinfo("Saved", f"Response saved to:\n{path}")
 
+    def _cancel_query(self):
+        if self._cancel_event:
+            self._cancel_event.set()
+        self.cancel_btn.config(state="disabled")
+        self.status_label.config(text="Cancelling...")
+
     def run_query(self):
         if self._current_thread and self._current_thread.is_alive():
             messagebox.showinfo("Info", "A query is already running.")
@@ -377,9 +387,16 @@ class QueryTab(ttk.Frame):
             return
 
         # Disable UI and start progress indicator
+        self._cancel_event = threading.Event()
         self.run_btn.config(state="disabled")
+        self.cancel_btn.config(state="normal")
         self.status_label.config(text="Running query...")
         self.progress.start(10)
+
+        cancel_event = self._cancel_event
+
+        def on_token(token: str):
+            self.after(0, lambda t=token: self._append_token(t))
 
         def worker():
             try:
@@ -392,9 +409,12 @@ class QueryTab(ttk.Frame):
                     summarizer_template=sum_template,
                     chat_template=chat_template,
                     log=self._log,
+                    cancel_event=cancel_event,
+                    token_callback=on_token,
                 )
             except Exception as e:
-                self.after(0, lambda err=e: self._on_query_error(err))
+                cancelled = cancel_event.is_set()
+                self.after(0, lambda err=e, c=cancelled: self._on_query_error(err, c))
                 return
 
             self.after(0, lambda: self._on_query_done(result, index_dir, repo_root))
@@ -402,18 +422,28 @@ class QueryTab(ttk.Frame):
         self._current_thread = threading.Thread(target=worker, daemon=True)
         self._current_thread.start()
 
-    def _on_query_error(self, error: Exception):
+    def _append_token(self, token: str):
+        self.response_text.insert("end", token)
+        self.response_text.see("end")
+        self.update_idletasks()
+
+    def _on_query_error(self, error: Exception, cancelled: bool = False):
         self.progress.stop()
         self.run_btn.config(state="normal")
-        self.status_label.config(text="Failed")
-        messagebox.showerror("Error", str(error))
+        self.cancel_btn.config(state="disabled")
+        if cancelled:
+            self.status_label.config(text="Cancelled")
+        else:
+            self.status_label.config(text="Failed")
+            messagebox.showerror("Error", str(error))
 
     def _on_query_done(self, result: dict, index_dir: str, repo_root: str):
         self.progress.stop()
         self.run_btn.config(state="normal")
-        self.status_label.config(text="Done")
+        self.cancel_btn.config(state="disabled")
+        cancelled = self._cancel_event and self._cancel_event.is_set()
+        self.status_label.config(text="Cancelled" if cancelled else "Done")
 
-        answer = result["answer"]
         metas = result["metas"]
         distances = result["distances"]
         scores = result["scores"]
@@ -425,8 +455,7 @@ class QueryTab(ttk.Frame):
         self.last_index_dir = index_dir
         self.last_repo_root = repo_root
 
-        self._append_output("\n=== ANSWER ===\n")
-        self._append_output(answer)
+        # Answer was already streamed token-by-token; no need to re-print
 
     def show_files_window(self):
         if not self.last_results:
