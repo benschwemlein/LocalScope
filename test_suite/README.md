@@ -34,6 +34,7 @@ Mutation tests (incremental update, delete, modify) get a cheap `shutil.copytree
 | `test_04_semantic_eval.py` | Semantic recall/precision/MRR against 10 ground-truth queries |
 | `test_05_chunking_strategies.py` | Compares AST vs text chunking at 3 chunk sizes — report only, always passes |
 | `test_06_overlap_tuning.py` | Compares text overlap values (0–600) at fixed 800-char chunks — report only |
+| `test_07_answer_quality.py` | LLM answer faithfulness + reference keyword overlap for 10 queries |
 
 ---
 
@@ -96,6 +97,33 @@ Variant           p@5   r@10    MRR
 | `chunk_overlap` | 200 | `indexer.py`, `incremental_indexer.py` |
 | `use_ast_chunking` | False (text) | GUI default |
 | `max_file_bytes` | 500,000 | `indexer.py` |
+
+---
+
+## Answer quality results (test_07, llama3.1)
+
+Faithfulness = fraction of retrieved class names mentioned in answer.
+Reference overlap = keyword match against hand-written reference answer.
+
+```
+Query                       faithful  must_kw  ref_ovlp
+------------------------------------------------------------
+jwt_authentication            0.40     PASS      0.25
+kafka_events                  0.30     PASS      0.27
+mongodb_configuration         0.20     PASS      0.51
+user_management               0.50     PASS      0.43
+scheduled_tasks               0.20     xfail     0.23   ← weak query
+angular_routing               0.60     PASS      0.62
+statistics                    0.50     xfail     0.34   ← weak query
+exception_handling            0.30     PASS      0.45
+quote_data_model              0.57     PASS      0.37
+angular_exchange_services     0.50     PASS      0.36
+------------------------------------------------------------
+Thresholds: faithfulness ≥ 0.20, reference overlap ≥ 0.20
+```
+
+`scheduled_tasks` and `statistics` are marked `xfail` — llama3.1 paraphrases these
+answers without citing specific class names. Will flip to xpass with a better model.
 
 ---
 
