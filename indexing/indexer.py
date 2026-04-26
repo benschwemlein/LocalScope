@@ -337,12 +337,9 @@ def index_repo(
                 char_chunked_count += 1
             
             for idx, chunk in enumerate(chunks):
-                # NOTE: We're still calling embed_text_with_retry for validation,
-                # but ChromaDB will use its OllamaEmbeddingFunction internally
-                # when we call collection.add() without explicit embeddings
-                
-                # Validate the chunk first
-                chunk = sanitize_chunk(chunk)
+                # Prepend the file path so thin files (POJOs, interfaces) have
+                # semantic context in their embedding.
+                chunk = sanitize_chunk(f"// {rel}\n{chunk}")
                 is_valid, reason = is_valid_chunk(chunk)
                 if not is_valid:
                     failed_chunks_count += 1

@@ -235,12 +235,12 @@ def index_repo_incremental(
         failed_chunks = 0
         
         for idx, chunk in enumerate(chunks):
-            chunk = sanitize_chunk(chunk)
+            chunk = sanitize_chunk(f"// {rel_path}\n{chunk}")
             is_valid, reason = is_valid_chunk(chunk)
             if not is_valid:
                 failed_chunks += 1
                 continue
-            
+
             chunk_data.append({
                 'id': f"{rel_path}::chunk_{idx}",
                 'document': chunk,
