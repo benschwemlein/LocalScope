@@ -4,7 +4,7 @@
   "settings_tab": {
     "ollama_url": "http://localhost:11434",
     "embed_model": "nomic-embed-text",
-    "chat_model": "llama3.1"
+    "chat_model": "qwen2.5:7b"
   },
 
   "index_tab": {
