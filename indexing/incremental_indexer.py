@@ -26,7 +26,7 @@ def index_repo_incremental(
     index_exts: set[str] | None = None,
     excluded_dirs: set[str] | None = None,
     max_file_bytes: int = 500_000,
-    chars_per_chunk: int = 1200,
+    chars_per_chunk: int = 800,  # 800 outperforms 1200 in semantic eval
     chunk_overlap: int = 200,
     use_ast_chunking: bool = True,
     skip_problematic_files: bool = True,

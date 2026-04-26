@@ -81,7 +81,8 @@ DEFAULT_INDEX_EXTS: set[str] = {
 }
 
 MAX_FILE_BYTES = 500_000
-CHARS_PER_CHUNK = 1200
+# 800 chars outperforms 1200 in semantic eval (p@5 0.43, r@10 0.56, MRR 0.80 vs 0.34/0.47/0.70)
+CHARS_PER_CHUNK = 800
 CHUNK_OVERLAP = 200
 
 # Code files use AST chunking
