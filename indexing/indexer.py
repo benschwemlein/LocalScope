@@ -75,8 +75,8 @@ DEFAULT_INDEX_EXTS: set[str] = {
     ".bat", ".cmd",
     ".ps1", ".psm1",
     
-    # Documentation — .md excluded: README noise dominates retrieval results
-    ".rst", ".adoc",
+    # Documentation — included for LLM answer context; deduplication prevents flooding
+    ".md", ".rst", ".adoc",
     ".txt", ".csv",
 }
 
