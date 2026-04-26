@@ -33,6 +33,7 @@ def index_repo_incremental(
     force_full_reindex: bool = False,
     num_workers: int = 2,  # 2 is safe with mxbai-embed-large; 4 deadlocks Ollama
     verbose: bool = False,  # NEW: Show individual file progress
+    progress_callback=None,  # Optional callable(files_done: int, files_total: int)
     log=print,
 ):
     """
@@ -285,11 +286,15 @@ def index_repo_incremental(
                             total_chunks_added += result['chunks']
                             total_files_processed += 1
                             total_failed += result.get('failed_chunks', 0)
-                            
+                            _done = total_files_processed
+
                             if verbose:
                                 log(f"✓ {result['rel_path']}: {result['chunks']} chunks")
                             elif total_files_processed % 10 == 0:
                                 log(f"Progress: {total_files_processed}/{len(files_to_process)} files, {total_chunks_added} chunks")
+
+                        if progress_callback:
+                            progress_callback(_done, len(files_to_process))
                     except Exception as e:
                         with stats_lock:
                             total_failed += result['chunks']
@@ -298,8 +303,11 @@ def index_repo_incremental(
                 else:
                     with stats_lock:
                         total_files_processed += 1
+                        _done = total_files_processed
                     if verbose:
                         log(f"○ {result['rel_path']}: Empty/skipped")
+                    if progress_callback:
+                        progress_callback(_done, len(files_to_process))
             else:
                 with stats_lock:
                     total_failed += 1

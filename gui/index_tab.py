@@ -414,6 +414,16 @@ class IndexTab(ttk.Frame):
         self.status_label = ttk.Label(bottom_frame, text="")
         self.status_label.pack(side="right")
 
+        # Progress bar + estimate row
+        progress_frame = ttk.Frame(self)
+        progress_frame.pack(fill="x", padx=8, pady=(0, 4))
+
+        self.progress_bar = ttk.Progressbar(progress_frame, mode="determinate", length=400)
+        self.progress_bar.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        self.estimate_label = ttk.Label(progress_frame, text="", width=28, anchor="w")
+        self.estimate_label.pack(side="left")
+
 
         log_frame = ttk.LabelFrame(self, text="Index log")
         log_frame.pack(fill="both", expand=True, padx=8, pady=4)
@@ -443,6 +453,39 @@ class IndexTab(ttk.Frame):
     def _append_log(self, msg: str):
         self.log_text.insert("end", msg + "\n")
         self.log_text.see("end")
+
+    def _count_indexable_files(self, repo_root: str, index_exts: set, excluded_dirs: set, max_bytes: int) -> int:
+        """Quick scan to count files that will be indexed."""
+        count = 0
+        try:
+            for root, dirs, files in os.walk(repo_root):
+                dirs[:] = [d for d in dirs if d not in excluded_dirs]
+                for fname in files:
+                    full = os.path.join(root, fname)
+                    _, ext = os.path.splitext(fname)
+                    if ext.lower() not in index_exts:
+                        continue
+                    try:
+                        if os.path.getsize(full) <= max_bytes:
+                            count += 1
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+        return count
+
+    def _estimate_minutes(self, file_count: int, num_workers: int) -> float:
+        """Estimate indexing time in minutes based on empirical rate."""
+        import config
+        # Empirical rates (seconds per file) from testing on AngularAndSpringSampleApp
+        # mxbai-embed-large: 87s / 235 files with 2 workers
+        # nomic-embed-text: ~15s / 235 files with 2 workers
+        if "mxbai" in getattr(config, "EMBED_MODEL", ""):
+            secs_per_file = 0.37
+        else:
+            secs_per_file = 0.06
+        total_secs = file_count * secs_per_file / max(num_workers, 1)
+        return total_secs / 60
 
     def _select_all_filetypes(self):
         for v in self._ext_vars.values():
@@ -551,15 +594,40 @@ class IndexTab(ttk.Frame):
 
         self.log_text.delete("1.0", "end")
         self.run_btn.config(state="disabled")
+        self.full_reindex_btn.config(state="disabled")
+        self.status_label.config(text="Scanning...")
+        self.progress_bar["value"] = 0
+        self.progress_bar["maximum"] = 100
+        self.estimate_label.config(text="")
+
+        # Count files and show estimate before starting
+        file_count = self._count_indexable_files(repo_root, selected_exts, excluded_dirs, max_bytes)
+        est_min = self._estimate_minutes(file_count, num_workers)
+        if est_min < 1:
+            est_str = f"~{int(est_min * 60)}s"
+        else:
+            est_str = f"~{est_min:.0f} min"
+        self.estimate_label.config(text=f"{file_count} files  {est_str}")
+        self.progress_bar["maximum"] = max(file_count, 1)
         self.status_label.config(text="Indexing...")
+
+        def on_progress(done: int, total: int):
+            def _update():
+                self.progress_bar["value"] = done
+                self.progress_bar["maximum"] = max(total, 1)
+                elapsed_frac = done / max(total, 1)
+                if elapsed_frac > 0.05:
+                    remaining = est_min * (1 - elapsed_frac)
+                    rem_str = f"~{int(remaining * 60)}s left" if remaining < 1 else f"~{remaining:.0f} min left"
+                    self.estimate_label.config(text=f"{done}/{total} files  {rem_str}")
+            self.after(0, _update)
 
         def worker():
             try:
-                # Get mode settings
                 incremental = self.incremental_mode_var.get()
                 force_full = not incremental
                 verbose = self.verbose_mode_var.get()
-                
+
                 index_repo_incremental(
                     repo_root=repo_root,
                     index_dir=index_dir,
@@ -574,6 +642,7 @@ class IndexTab(ttk.Frame):
                     force_full_reindex=force_full,
                     num_workers=num_workers,
                     verbose=verbose,
+                    progress_callback=on_progress,
                     log=self._log,
                 )
                 self._done(True)
@@ -613,5 +682,9 @@ class IndexTab(ttk.Frame):
     def _done(self, ok: bool):
         def finish():
             self.run_btn.config(state="normal")
+            self.full_reindex_btn.config(state="normal")
             self.status_label.config(text="Done" if ok else "Failed")
+            if ok:
+                self.progress_bar["value"] = self.progress_bar["maximum"]
+                self.estimate_label.config(text="Complete")
         self.after(0, finish)
