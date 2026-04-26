@@ -272,7 +272,7 @@ class IndexTab(ttk.Frame):
         ).grid(row=5, column=3)
         # Parallel workers
         ttk.Label(params_frame, text="Parallel workers:").grid(row=7, column=0, sticky="w")
-        self.num_workers_var = tk.StringVar(value=str(s.get("num_workers", 4)))
+        self.num_workers_var = tk.StringVar(value=str(s.get("num_workers", 2)))
         ttk.Entry(params_frame, textvariable=self.num_workers_var, width=5).grid(
             row=7, column=1, sticky="w", padx=4
         )
@@ -284,11 +284,11 @@ class IndexTab(ttk.Frame):
                 "Parallel workers",
                 (
                     "Number of parallel threads for indexing.\n\n"
-                    "Higher = faster for large codebases, but uses more CPU.\n\n"
+                    "Default is 2 — safe and fast with mxbai-embed-large.\n"
+                    "Setting to 4+ may deadlock Ollama with larger embed models.\n\n"
                     "Recommended:\n"
-                    "  Small repos (<1000 files): 1-2 workers\n"
-                    "  Medium repos (1000-5000 files): 4-8 workers\n"
-                    "  Large repos (5000+ files): 8-12 workers\n\n"
+                    "  nomic-embed-text: up to 4 workers\n"
+                    "  mxbai-embed-large: 2 workers\n\n"
                     "Note: More workers = more memory usage"
                 ),
             ),
@@ -463,7 +463,7 @@ class IndexTab(ttk.Frame):
             "chars_per_chunk": int(self.chars_per_chunk_var.get() or CHARS_PER_CHUNK),
             "chunk_overlap": int(self.chunk_overlap_var.get() or CHUNK_OVERLAP),
             "max_file_bytes": int(self.max_file_bytes_var.get() or MAX_FILE_BYTES),
-            "num_workers": int(self.num_workers_var.get() or 4),
+            "num_workers": int(self.num_workers_var.get() or 2),
             "exclude_dirs_csv": self.exclude_dirs_var.get(),
             "filetypes": {ext: var.get() for ext, var in self._ext_vars.items()},
         }

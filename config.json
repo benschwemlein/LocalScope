@@ -13,6 +13,7 @@
     "collection_name": "repo_chunks",
 
     "chars_per_chunk": 800,
+    "num_workers": 2,
     "chunk_overlap": 200,
     "max_file_bytes": 500000,
 
