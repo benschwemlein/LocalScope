@@ -13,7 +13,6 @@ Reads model settings (embed_model, chat_model, ollama_url) from
 import argparse
 import json
 import sys
-import os
 from pathlib import Path
 
 # Allow running from repo root or cli/ directory
@@ -77,7 +76,7 @@ def main():
         print("ERROR: --index is required (or set index_dir in GUI settings)", file=sys.stderr)
         sys.exit(1)
 
-    # Apply settings to config module
+    # Apply same settings the GUI applies before running a query
     import config
     if st.get("ollama_url"):
         config.OLLAMA_URL = st["ollama_url"]
@@ -86,66 +85,33 @@ def main():
     if st.get("chat_model"):
         config.CHAT_MODEL = st["chat_model"]
 
-    # Load prompts for summarizer (only needed if query > max_chars)
     summarizer_template = settings.get("prompts_tab", {}).get("summarizer_prompt", "")
+    chat_template = settings.get("prompts_tab", {}).get("chat_prompt", "")
 
-    from querying.query_engine import _embed_text, _summarize_query, _compute_relative_scores
-    import chromadb
-    from chromadb.config import Settings
+    # Use the same run_query function the GUI uses
+    from querying.query_engine import run_query
 
     def log(msg):
         print(msg, file=sys.stderr)
 
-    # Summarize if needed
-    query_for_embed = query_text
-    if len(query_text) > args.max_chars and summarizer_template:
-        log(f"[rag_query] Query is {len(query_text)} chars, summarizing...")
-        query_for_embed = _summarize_query(query_text, summarizer_template, log)
-
-    log(f"[rag_query] Embedding query...")
-    embedding = _embed_text(query_for_embed, log)
-    if embedding is None:
-        print("ERROR: Failed to get embedding from Ollama", file=sys.stderr)
-        sys.exit(1)
-
-    client = chromadb.PersistentClient(
-        path=args.index,
-        settings=Settings(anonymized_telemetry=False),
-    )
-    collections = client.list_collections()
-    if not collections:
-        print(f"ERROR: No collections found in {args.index}", file=sys.stderr)
-        sys.exit(1)
-
-    collection = client.get_collection(collections[0].name)
-    log(f"[rag_query] Querying collection '{collections[0].name}' for top {args.top_k} results...")
-
-    res = collection.query(
-        query_embeddings=[embedding],
-        n_results=args.top_k * 3,
-        include=["documents", "metadatas", "distances"],
+    result = run_query(
+        bug_text=query_text,
+        index_dir=args.index,
+        top_k=args.top_k,
+        max_chars=args.max_chars,
+        summarizer_template=summarizer_template,
+        chat_template=chat_template if not args.no_snippets and not args.json_output else "",
+        log=log,
     )
 
-    docs_list  = res.get("documents", [[]])[0]
-    metas_list = res.get("metadatas", [[]])[0]
-    dist_list  = res.get("distances",  [[]])[0]
-
-    # Deduplicate by source file
-    seen: set[str] = set()
-    deduped = []
-    for doc, meta, dist in zip(docs_list, metas_list, dist_list):
-        source = meta.get("source", "")
-        if source not in seen:
-            seen.add(source)
-            deduped.append((doc, meta, dist))
-        if len(deduped) == args.top_k:
-            break
-
-    scores = _compute_relative_scores([d[2] for d in deduped])
+    metas   = result["metas"]
+    docs    = result["docs"]
+    scores  = result["scores"]
+    dists   = result["distances"]
 
     if args.json_output:
         output = []
-        for (doc, meta, dist), score in zip(deduped, scores):
+        for meta, doc, score, dist in zip(metas, docs, scores, dists):
             entry = {"source": meta.get("source", ""), "score": round(score, 1), "distance": dist}
             if not args.no_snippets:
                 entry["snippet"] = doc
@@ -153,9 +119,8 @@ def main():
         print(json.dumps(output, indent=2))
         return
 
-    # Human-readable output
-    print(f"\n=== RAG Results: {len(deduped)} files ===\n")
-    for i, ((doc, meta, dist), score) in enumerate(zip(deduped, scores), 1):
+    print(f"\n=== RAG Results: {len(metas)} files ===\n")
+    for i, (meta, doc, score, dist) in enumerate(zip(metas, docs, scores, dists), 1):
         source = meta.get("source", "<unknown>")
         chunk  = meta.get("chunk_index", "?")
         print(f"[{i:02d}] {score:5.1f}%  {source}  (chunk {chunk})")
