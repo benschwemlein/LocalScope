@@ -12,7 +12,7 @@
     "index_dir_base": "chroma_repo",
     "collection_name": "repo_chunks",
 
-    "chars_per_chunk": 1200,
+    "chars_per_chunk": 800,
     "chunk_overlap": 200,
     "max_file_bytes": 500000,
 
