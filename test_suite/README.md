@@ -36,6 +36,7 @@ Mutation tests (incremental update, delete, modify) get a cheap `shutil.copytree
 | `test_06_overlap_tuning.py` | Compares text overlap values (0–600) at fixed 800-char chunks — report only |
 | `test_07_answer_quality.py` | LLM answer faithfulness + reference keyword overlap for 10 queries |
 | `test_08_model_comparison.py` | Compares chat models on faithfulness + reference overlap — report only |
+| `test_09_embed_model_comparison.py` | Compares embedding models on p@5, r@10, MRR — report only |
 
 ---
 
@@ -119,7 +120,7 @@ python3.13 -m pytest test_suite/test_08_model_comparison.py -m chunking_eval -v 
 | `chunk_overlap` | 200 | `indexer.py`, `incremental_indexer.py` |
 | `use_ast_chunking` | False (text) | GUI default |
 | `max_file_bytes` | 500,000 | `indexer.py` |
-| `embed_model` | nomic-embed-text | `config.json` |
+| `embed_model` | mxbai-embed-large | `config.json` |
 | `chat_model` | qwen2.5:7b | `config.json` |
 
 ---
@@ -151,8 +152,43 @@ answers without citing specific class names. Will flip to xpass with a better mo
 
 ---
 
+## Embedding model comparison results (test_09)
+
+```
+Model                  p@5   r@10    MRR
+----------------------------------------------------
+  nomic-embed-text    0.40   0.56   0.62
+  mxbai-embed-large   0.66   0.82   0.91  ← current default
+----------------------------------------------------
+
+Query                        nomic   mxbai  (r@10)
+----------------------------------------------------
+  jwt_authentication          0.60    0.60
+  kafka_events                0.60    0.80
+  mongodb_configuration       0.50    1.00
+  user_management             0.83    1.00
+  scheduled_tasks             0.75    0.75
+  angular_routing             1.00    1.00
+  statistics                  0.60    0.80
+  exception_handling          0.75    0.75
+  quote_data_model            0.00    0.80  ← was broken
+  angular_exchange_services   0.00    0.75  ← was broken
+----------------------------------------------------
+```
+
+`mxbai-embed-large` fixed the two previously 0.00-recall queries (thin POJOs and
+cross-language TypeScript). Existing indexes must be fully reindexed after switching.
+
+Run with:
+```bash
+python3.13 -m pytest test_suite/test_09_embed_model_comparison.py -m chunking_eval -v -s
+```
+
+---
+
 ## Known gaps
 
-- `quote_data_model` and `angular_exchange_services` score 0.00 recall — thin POJO files and
-  cross-language TypeScript queries are not well handled by `nomic-embed-text`. A reranker or
-  better embedding model would be needed to close these.
+- No remaining 0.00-recall queries with `mxbai-embed-large` — previously broken queries
+  (`quote_data_model`, `angular_exchange_services`) now score 0.80 and 0.75 respectively.
+- Answer quality (`test_07`) thresholds calibrated to `llama3.1`; re-run `test_08` if chat
+  model changes to verify improvement.
