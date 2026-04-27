@@ -455,7 +455,34 @@ class QueryTab(ttk.Frame):
         self.last_index_dir = index_dir
         self.last_repo_root = repo_root
 
-        # Answer was already streamed token-by-token; no need to re-print
+        # Answer was already streamed token-by-token; append clickable file list
+        self._append_file_links(repo_root)
+
+    def _append_file_links(self, repo_root: str):
+        if not self.last_results:
+            return
+
+        self.response_text.insert("end", "\n\n=== RETRIEVED FILES ===\n")
+        self.response_text.tag_config("file_link", foreground="blue", underline=True)
+
+        for i, item in enumerate(self.last_results, 1):
+            meta  = item["meta"]
+            score = item["score"]
+            rel_path = meta.get("source", meta.get("path", "<unknown>"))
+            full_path = os.path.join(repo_root, rel_path) if repo_root else rel_path
+
+            line = f"[{i:02d}] {score:5.1f}%  {rel_path}\n"
+            tag = f"link_{i}"
+            self.response_text.tag_config(tag, foreground="blue", underline=True)
+            self.response_text.tag_bind(
+                tag, "<Button-1>",
+                lambda e, p=full_path: open_file_cross_platform(p) if os.path.isfile(p) else None,
+            )
+            self.response_text.tag_bind(tag, "<Enter>", lambda e: self.response_text.config(cursor="hand2"))
+            self.response_text.tag_bind(tag, "<Leave>", lambda e: self.response_text.config(cursor=""))
+            self.response_text.insert("end", line, tag)
+
+        self.response_text.see("end")
 
     def show_files_window(self):
         if not self.last_results:
@@ -483,7 +510,7 @@ class QueryTab(ttk.Frame):
         for item in self.last_results:
             meta = item["meta"]
             score = item["score"]
-            path = meta.get("path", "<unknown>")
+            path = meta.get("source", meta.get("path", "<unknown>"))
             if path not in best_by_path or score > best_by_path[path]:
                 best_by_path[path] = score
             counts_by_path[path] = counts_by_path.get(path, 0) + 1
