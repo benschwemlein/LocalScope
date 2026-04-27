@@ -187,6 +187,7 @@ def run_query(
     log: LogFn = print,
     cancel_event: threading.Event | None = None,
     token_callback: Callable[[str], None] | None = None,
+    step_callback: Callable[[int, str], None] | None = None,
 ):
     """
     Run a query against the ChromaDB index using Ollama embeddings and chat.
@@ -232,21 +233,28 @@ def run_query(
     def _cancelled():
         return cancel_event is not None and cancel_event.is_set()
 
+    def _step(n: int, label: str):
+        if step_callback:
+            step_callback(n, label)
+
     query_for_embedding = bug
     if len(bug) > max_chars:
         if _cancelled():
             raise RuntimeError("Cancelled.")
         log(f"[query_engine] Bug text is {len(bug)} chars, summarizing before embedding...")
+        _step(1, "Summarizing...")
         query_for_embedding = _summarize_query(bug, summarizer_template, log)
 
     if _cancelled():
         raise RuntimeError("Cancelled.")
 
+    _step(1 if len(bug) <= max_chars else 2, "Embedding...")
     log("[query_engine] Embedding query text...")
     q_embedding = _embed_text(query_for_embedding, log)
     if q_embedding is None:
         raise RuntimeError("Failed to obtain embedding from Ollama.")
 
+    _step(2, "Searching index...")
     log(f"[query_engine] Querying index for top {top_k} snippets...")
 
     # Fetch more candidates so deduplication still yields top_k results
@@ -300,9 +308,12 @@ def run_query(
         log("[query_engine] WARNING: All retrieved snippets have very low relative scores.")
         log("[query_engine] The answer may rely mostly on the bug text and not on code context.")
 
+    _step(3, "Searching index...")
+
     if _cancelled():
         raise RuntimeError("Cancelled.")
 
+    _step(3, "Generating answer...")
     log("")
     log("[query_engine] Asking LLM with retrieved context...")
     if token_callback:

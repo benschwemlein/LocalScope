@@ -139,7 +139,7 @@ class QueryTab(ttk.Frame):
         self.status_label = ttk.Label(status_frame, text="Idle")
         self.status_label.pack(side="left")
 
-        self.progress = ttk.Progressbar(status_frame, mode="indeterminate")
+        self.progress = ttk.Progressbar(status_frame, mode="determinate", maximum=4, value=0)
         self.progress.pack(side="right", fill="x", expand=True, padx=(8, 0))
 
         # Single combined response area
@@ -391,9 +391,15 @@ class QueryTab(ttk.Frame):
         self.run_btn.config(state="disabled")
         self.cancel_btn.config(state="normal")
         self.status_label.config(text="Running query...")
-        self.progress.start(10)
+        self.progress["value"] = 0
 
         cancel_event = self._cancel_event
+
+        def advance(step: int, label: str):
+            self.after(0, lambda s=step, l=label: (
+                self.progress.configure(value=s),
+                self.status_label.configure(text=l),
+            ))
 
         def on_token(token: str):
             self.after(0, lambda t=token: self._append_token(t))
@@ -411,6 +417,7 @@ class QueryTab(ttk.Frame):
                     log=self._log,
                     cancel_event=cancel_event,
                     token_callback=on_token,
+                    step_callback=advance,
                 )
             except Exception as e:
                 cancelled = cancel_event.is_set()
@@ -428,7 +435,7 @@ class QueryTab(ttk.Frame):
         self.update_idletasks()
 
     def _on_query_error(self, error: Exception, cancelled: bool = False):
-        self.progress.stop()
+        self.progress["value"] = 0
         self.run_btn.config(state="normal")
         self.cancel_btn.config(state="disabled")
         if cancelled:
@@ -438,7 +445,7 @@ class QueryTab(ttk.Frame):
             messagebox.showerror("Error", str(error))
 
     def _on_query_done(self, result: dict, index_dir: str, repo_root: str):
-        self.progress.stop()
+        self.progress["value"] = 0
         self.run_btn.config(state="normal")
         self.cancel_btn.config(state="disabled")
         cancelled = self._cancel_event and self._cancel_event.is_set()
