@@ -1,0 +1,24 @@
+# Vector index / embedding stores (NEVER commit indexed source code)
+chroma_repo*/
+indexing/llm*/
+**/chroma.sqlite3
+*.sqlite3
+*.parquet
+*.bin
+
+# Local runtime config (may contain client repo paths)
+config.json
+.local-rag-llm/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

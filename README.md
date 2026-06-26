@@ -2,7 +2,19 @@
 
 # **Local RAG LLM**
 
-Local RAG LLM is a desktop application for running Retrieval Augmented Generation against any source code repository using only local models. The application indexes a repository into a vector database, retrieves relevant code snippets for any natural language question, and uses a local LLM to explain how the code works or why a problem occurs. All processing remains on your machine.
+A desktop application for running Retrieval Augmented Generation against any source code repository using only local models. It indexes a repository into a vector database, retrieves the most relevant code for a natural language question, bug report, or stack trace, and uses a local LLM to explain how the code works or why a problem occurs. **Everything runs on your machine, no cloud calls, no code leaves your laptop.**
+
+### Why I built it
+
+Ramping onto a large, unfamiliar codebase is slow, and sending proprietary source to a cloud LLM is often off the table. I built this to ask plain-English questions about a codebase ("where is the credit-card application flow handled?", "what calls this service?") and get back the exact files plus an explanation, entirely offline. I used it to onboard onto a large commercial codebase faster than the rest of the team.
+
+### Technical highlights
+
+* **AST-aware chunking** — splits code at logical boundaries (functions, classes, methods) instead of arbitrary character offsets, so retrieved snippets are coherent units of code. Uses the `astchunk` library for multi-language support with a Python-`ast` fallback.
+* **Incremental indexing** — re-indexes only changed files instead of rebuilding the whole vector store.
+* **Fully local and private** — ChromaDB for vector search, Ollama for embeddings and chat. No API keys, no external services.
+* **Benchmarking test suite** — a pytest suite that compares embedding models, chunking strategies, overlap tuning, top-k, and answer quality, so model and chunking choices are measured, not guessed.
+* **GUI and CLI** — a Tkinter desktop app for interactive use and a CLI for scripting.
 
 ---
 
@@ -22,9 +34,9 @@ Local RAG LLM is a desktop application for running Retrieval Augmented Generatio
 4. Clone this repo:
 
    ```bash
-   git clone <your repo>
-   cd local-rag-llm
-   pip install -r requirements.txt
+   git clone https://github.com/benschwemlein/code_llm.git
+   cd code_llm
+   pip install chromadb requests
    ```
 
 5. Start the application:
@@ -110,9 +122,9 @@ http://localhost:11434
 Clone the project:
 
 ```bash
-git clone <your repo>
-cd local-rag-llm
-pip install -r requirements.txt
+git clone https://github.com/benschwemlein/code_llm.git
+cd code_llm
+pip install chromadb requests
 ```
 
 Run the application:
@@ -313,23 +325,38 @@ Summarizer or Chat prompt is empty.
 # Project Structure
 
 ```
-local-rag-llm/
-  app.py
-  config.py
+code_llm/
+  app.py                      # Tkinter GUI entry point
+  config.py / settings_*.py   # settings + persisted config (~/.local-rag-llm/config.json)
 
-  gui/
+  gui/                        # GUI tabs: Query, Index, Settings, Prompts
     query_tab.py
-    prompts_tab.py
     index_tab.py
     settings_tab.py
+    prompts_tab.py
+
+  indexing/                   # repository indexing
+    indexer.py                # full index
+    incremental_indexer.py    # re-index only changed files
+    ast_chunker.py            # AST-aware code chunking
 
   querying/
-    query_engine.py
+    query_engine.py           # embed -> retrieve -> summarize -> LLM answer
 
-  indexing/
-    indexer.py
+  ollama_manager/             # local model management + downloads
+    download_manager.py
 
-  README.md
+  cli/
+    rag_query.py              # command-line query interface
+
+  test_suite/                 # pytest benchmarks: embedding models, chunking,
+                              # overlap, top-k, answer quality, model comparison
 ```
+
+---
+
+# License
+
+See [LICENSE_AGREEMENT.md](LICENSE_AGREEMENT.md).
 
 
