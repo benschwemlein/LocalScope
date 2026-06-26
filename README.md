@@ -357,6 +357,6 @@ code_llm/
 
 # License
 
-See [LICENSE_AGREEMENT.md](LICENSE_AGREEMENT.md).
+[PolyForm Noncommercial License 1.0.0](LICENSE.md) — free for noncommercial use; commercial use requires a separate license from the author. Contact: benschwemlein@gmail.com
 
 
