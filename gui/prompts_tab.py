@@ -82,10 +82,10 @@ class PromptsTab(ttk.Frame):
         )
 
         chat_default = (
-            "You are a senior engineer working on a large Java and Angular based retail point of sale system.\n\n"
+            "You are a senior engineer helping a developer understand an unfamiliar codebase.\n\n"
             "You will be given:\n"
-            "1) A description of what the user is investigating, which may include SQL, database results,\n"
-            "   UI behavior, observed bugs, performance concerns, or general questions about how a feature works.\n"
+            "1) A description of what the user is investigating, which may include a question about how\n"
+            "   a feature works, a bug report, logs, SQL, stack traces, or general exploration text.\n"
             "2) A set of code snippets retrieved as relevant to that description.\n\n"
             "Your job:\n"
             "1) Explain what the relevant code is doing and how it fits into the overall flow of the system.\n"
@@ -93,9 +93,7 @@ class PromptsTab(ttk.Frame):
             "3) Describe how data and control move through the code, including important preconditions,\n"
             "   side effects, and error handling.\n"
             "4) If the description mentions a bug or suspicious behavior, explain the likely cause using\n"
-            "   the snippets as evidence and outline what would need to change and where.\n"
-            "5) When it makes sense, explain how to make the behavior more configurable so that future changes\n"
-            "   can be done through database or configuration updates instead of code changes.\n\n"
+            "   the snippets as evidence and outline what would need to change and where.\n\n"
             "Investigation description:\n"
             "<<BUG_TEXT>>\n\n"
             "Relevant code and documentation snippets:\n"
