@@ -1,0 +1,138 @@
+{
+  "version": 1,
+
+  "settings_tab": {
+    "ollama_url": "http://localhost:11434",
+    "embed_model": "nomic-embed-text",
+    "chat_model": "llama3.1"
+  },
+
+  "index_tab": {
+    "repo_root": "",
+    "index_dir_base": "chroma_repo",
+    "collection_name": "repo_chunks",
+
+    "chars_per_chunk": 1200,
+    "chunk_overlap": 200,
+    "max_file_bytes": 500000,
+
+    "exclude_dirs_csv": ".git, .idea, .vscode, node_modules, build, dist, out, target, .gradle, .venv, venv, __pycache__",
+
+    "filetypes": {
+      ".cs": true,
+      ".csx": true,
+      ".vb": true,
+      ".fs": true,
+      ".fsi": true,
+      ".fsx": true,
+      ".xaml": true,
+      ".cshtml": true,
+      ".config": true,
+      ".resx": true,
+      ".sln": true,
+      ".csproj": true,
+      ".vbproj": true,
+      ".fsproj": true,
+
+      ".php": true,
+      ".phtml": true,
+      ".twig": true,
+      ".tpl": true,
+
+      ".java": true,
+      ".kt": true,
+      ".kts": true,
+      ".groovy": true,
+      ".gvy": true,
+      ".scala": true,
+      ".sc": true,
+      ".gradle": true,
+      ".xml": true,
+      ".properties": true,
+
+      ".js": true,
+      ".jsx": true,
+      ".ts": true,
+      ".tsx": true,
+      ".mjs": true,
+      ".cjs": true,
+      ".vue": true,
+      ".svelte": true,
+      ".astro": true,
+      ".html": true,
+      ".css": true,
+      ".scss": true,
+      ".less": true,
+      ".json": true,
+      ".json5": true,
+
+      ".py": true,
+      ".pyi": true,
+      ".ipynb": true,
+      ".toml": true,
+      ".ini": true,
+      ".cfg": true,
+      ".env": true,
+
+      ".plist": true,
+      ".storyboard": true,
+      ".xib": true,
+
+      ".c": true,
+      ".h": true,
+      ".cpp": true,
+      ".hpp": true,
+      ".cc": true,
+      ".cxx": true,
+      ".hh": true,
+      ".ino": true,
+      ".mk": true,
+
+      ".rs": true,
+      ".go": true,
+      ".rb": true,
+      ".swift": true,
+      ".m": true,
+      ".mm": true,
+
+      ".tf": true,
+      ".tfvars": true,
+      ".yaml": true,
+      ".yml": true,
+
+      ".sql": true,
+      ".psql": true,
+      ".hql": true,
+      ".cql": true,
+
+      ".sh": true,
+      ".bash": true,
+      ".zsh": true,
+      ".ksh": true,
+      ".fish": true,
+      ".bat": true,
+      ".cmd": true,
+      ".ps1": true,
+      ".psm1": true,
+
+      ".md": true,
+      ".rst": true,
+      ".adoc": true,
+      ".txt": true,
+      ".csv": true
+    }
+  },
+
+  "query_tab": {
+    "index_dir": "chroma_repo",
+    "repo_root": "",
+    "top_k": 16,
+    "max_chars": 4000,
+    "bug_text": ""
+  },
+
+  "prompts_tab": {
+    "summarizer_prompt": "You are a senior engineer helping with code search.\n\nYou will be given a long input that may be a question, Jira ticket text, investigation notes, logs, or SQL.\nSometimes it describes a bug, other times it is simply trying to understand how a feature or flow works.\nYour job is to rewrite it as a shorter query that preserves all important technical details needed\nto search the codebase.\n\nFull input:\n\n<<BUG_TEXT>>\n\nTask:\n1) Rewrite this as a concise search query for a codebase, suitable for either tracking down a bug\n   or exploring how the code implements a behavior.\n2) Keep all important technical details such as class names, endpoints, error messages,\n   stack trace fragments, config keys, error codes, i18n string keys, table and column names,\n   and SQL fragments.\n3) Never remove or alter i18n keys, table or column names, or any text that looks like SQL.\n4) Remove obvious noise such as greetings, scheduling chatter, and unrelated context.\n5) Aim for a few sentences or a short paragraph.\n6) Do not invent new information.\n",
+    "chat_prompt": "You are a senior engineer working on a large Java and Angular based retail point of sale system.\n\nYou will be given:\n1) A description of what the user is investigating, which may include SQL, database results,\n   UI behavior, observed bugs, performance concerns, or general questions about how a feature works.\n2) A set of code snippets retrieved as relevant to that description.\n\nYour job:\n1) Explain what the relevant code is doing and how it fits into the overall flow of the system.\n2) Point to specific files, classes, methods, configuration keys, and database objects that matter.\n3) Describe how data and control move through the code, including important preconditions,\n   side effects, and error handling.\n4) If the description mentions a bug or suspicious behavior, explain the likely cause using\n   the snippets as evidence and outline what would need to change and where.\n5) When it makes sense, explain how to make the behavior more configurable so that future changes\n   can be done through database or configuration updates instead of code changes.\n\nInvestigation description:\n<<BUG_TEXT>>\n\nRelevant code and documentation snippets:\n<<SNIPPETS>>\n\nAnswer:\n1) Start by summarizing what the user seems to be trying to understand or debug.\n2) Then explain, in concrete terms, what the shown code does.\n3) Clearly separate:\n   a) Facts that are directly supported by the snippets.\n   b) Hypotheses or guesses that go beyond the snippets, and label them as such.\n"
+  }
+}
