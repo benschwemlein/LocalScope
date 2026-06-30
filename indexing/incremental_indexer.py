@@ -54,6 +54,14 @@ def index_repo_incremental(
     repo_root = os.path.abspath(repo_root)
     index_dir = index_dir or config.DEFAULT_INDEX_DIR
     collection_name = collection_name or config.DEFAULT_COLLECTION_NAME
+    from indexing.indexer import DEFAULT_INDEX_EXTS
+    index_exts = index_exts or DEFAULT_INDEX_EXTS
+    excluded_dirs = excluded_dirs or {
+        ".git", ".idea", ".vscode",
+        "node_modules",
+        "build", "dist", "out", "target", ".gradle",
+        ".venv", "venv", "__pycache__",
+    }
     
     start_time = time.time()
     

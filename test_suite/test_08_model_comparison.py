@@ -4,8 +4,11 @@ Chat model comparison — NOT part of the regular test suite.
 Run explicitly with:
     python3.13 -m pytest test_suite/test_08_model_comparison.py -m chunking_eval -v -s
 
-Tests answer quality (faithfulness + reference overlap) across the three locally
-installed chat models: llama3.1, deepseek-coder:6.7b, qwen2.5:7b.
+Tests answer quality (faithfulness + reference overlap) across chat models.
+
+Before/after Zack Lowery's June 2026 recommendations:
+  Before: qwen2.5:7b  (prior default — Leading Edje benchmark winner)
+  After:  gemma4:12b  (Zack's pick for general dev, single consumer GPU)
 
 Uses the same faithfulness and reference overlap metrics as test_07.
 No pass/fail thresholds — the report is the output.
@@ -21,9 +24,8 @@ from test_07_answer_quality import (
 )
 
 CHAT_MODELS = [
-    "llama3.1",
-    "deepseek-coder:6.7b",
-    "qwen2.5:7b",
+    "qwen2.5:7b",    # pre-Zack baseline (prior default)
+    "gemma4:12b",    # Zack Lowery's pick — general dev, single consumer GPU
 ]
 
 
