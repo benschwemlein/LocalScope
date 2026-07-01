@@ -13,6 +13,27 @@ _JAVA_LANG = tree_sitter.Language(tsjava.language())
 
 _JAVA_SRC_ROOTS = ["src/main/java", "src/test/java", "src"]
 
+# Java standard library type names we should not create edges for
+_JAVA_BUILTINS = frozenset({
+    "String", "Integer", "Long", "Double", "Float", "Boolean", "Byte", "Short", "Character",
+    "Object", "Class", "Enum", "Void", "Number", "Math",
+    "List", "Map", "Set", "Collection", "Queue", "Deque", "Stack", "Iterator",
+    "ArrayList", "LinkedList", "HashMap", "HashSet", "TreeMap", "TreeSet",
+    "Optional", "Stream", "Arrays", "Collections", "Objects",
+    "StringBuilder", "StringBuffer",
+    "Exception", "RuntimeException", "Error", "Throwable",
+    "Thread", "Runnable", "Callable",
+    "BigDecimal", "BigInteger", "LocalDate", "LocalTime", "LocalDateTime",
+    "Duration", "Period", "Instant", "ZonedDateTime",
+    "EnumMap", "EnumSet", "LinkedHashMap", "LinkedHashSet",
+    "InputStream", "OutputStream", "Reader", "Writer",
+    "Path", "File", "URI", "URL",
+    "Override", "Deprecated", "SuppressWarnings", "FunctionalInterface",
+    "Component", "Service", "Repository", "Controller", "Bean", "Autowired",
+    "Slf4j", "Data", "Getter", "Setter", "Builder", "NoArgsConstructor",
+    "AllArgsConstructor", "RequiredArgsConstructor",
+})
+
 
 def _repo_root(file_path: str, source: str) -> str | None:
     abs_file = os.path.abspath(file_path)
@@ -33,11 +54,30 @@ def _resolve_java(qualified: str, repo_root: str) -> str | None:
     return None
 
 
+def _resolve_same_package(simple_name: str, source_dir: str, repo_root: str, source: str) -> str | None:
+    """Resolve a type name to a file in the same package directory."""
+    candidate = os.path.join(source_dir, simple_name + ".java")
+    if os.path.exists(candidate):
+        rel = os.path.relpath(candidate, repo_root)
+        if rel != source:
+            return rel
+    return None
+
+
 def _txt(node) -> str:
     return node.text.decode("utf-8", errors="replace") if node.text else ""
 
 
-def _walk_invokes(node, import_map: dict, repo_root: str, source: str, edges: list[Edge]):
+def _collect_type_identifiers(node, result: set[str]):
+    if node.type == "type_identifier":
+        name = _txt(node)
+        if name and name not in _JAVA_BUILTINS:
+            result.add(name)
+    for child in node.children:
+        _collect_type_identifiers(child, result)
+
+
+def _walk_invokes(node, import_map: dict, source_dir: str, repo_root: str, source: str, edges: list[Edge]):
     if node.type == "object_creation_expression":
         t = node.child_by_field_name("type")
         if t:
@@ -46,8 +86,12 @@ def _walk_invokes(node, import_map: dict, repo_root: str, source: str, edges: li
                 target = _resolve_java(import_map[name], repo_root)
                 if target and target != source:
                     edges.append(Edge(source, target, EdgeType.INVOKES))
+            elif name not in _JAVA_BUILTINS:
+                target = _resolve_same_package(name, source_dir, repo_root, source)
+                if target:
+                    edges.append(Edge(source, target, EdgeType.INVOKES))
     for child in node.children:
-        _walk_invokes(child, import_map, repo_root, source, edges)
+        _walk_invokes(child, import_map, source_dir, repo_root, source, edges)
 
 
 class JavaPlugin(LanguagePlugin):
@@ -64,6 +108,8 @@ class JavaPlugin(LanguagePlugin):
         root_dir = _repo_root(file_path, source)
         if root_dir is None:
             return []
+
+        source_dir = os.path.dirname(os.path.abspath(file_path))
 
         with open(file_path, "rb") as fh:
             code = fh.read()
@@ -91,7 +137,7 @@ class JavaPlugin(LanguagePlugin):
             if target and target != source:
                 edges.append(Edge(source, target, EdgeType.IMPORTS))
 
-        # Walk class declarations for INHERITS
+        # INHERITS from extends/implements
         for node in root.children:
             if node.type == "class_declaration":
                 sc = node.child_by_field_name("superclass")
@@ -101,8 +147,10 @@ class JavaPlugin(LanguagePlugin):
                             name = _txt(child)
                             if name in import_map:
                                 target = _resolve_java(import_map[name], root_dir)
-                                if target and target != source:
-                                    edges.append(Edge(source, target, EdgeType.INHERITS))
+                            else:
+                                target = _resolve_same_package(name, source_dir, root_dir, source)
+                            if target and target != source:
+                                edges.append(Edge(source, target, EdgeType.INHERITS))
 
                 ifaces = node.child_by_field_name("interfaces")
                 if ifaces:
@@ -113,11 +161,24 @@ class JavaPlugin(LanguagePlugin):
                                     name = _txt(t)
                                     if name in import_map:
                                         target = _resolve_java(import_map[name], root_dir)
-                                        if target and target != source:
-                                            edges.append(Edge(source, target, EdgeType.INHERITS))
+                                    else:
+                                        target = _resolve_same_package(name, source_dir, root_dir, source)
+                                    if target and target != source:
+                                        edges.append(Edge(source, target, EdgeType.INHERITS))
 
-        # INVOKES edges from object_creation_expression
-        _walk_invokes(root, import_map, root_dir, source, edges)
+        # INVOKES from object_creation_expression
+        _walk_invokes(root, import_map, source_dir, root_dir, source, edges)
+
+        # REFERENCES: same-package type uses in field/param/variable declarations
+        # Collect all type_identifier nodes; resolve those in same package
+        all_types: set[str] = set()
+        _collect_type_identifiers(root, all_types)
+        for name in all_types:
+            if name in import_map:
+                continue  # already handled as IMPORTS
+            target = _resolve_same_package(name, source_dir, root_dir, source)
+            if target:
+                edges.append(Edge(source, target, EdgeType.REFERENCES))
 
         # Deduplicate
         seen: set[tuple] = set()

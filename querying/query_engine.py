@@ -296,8 +296,45 @@ def run_query(
                 from graph.fusion import SeedResult, expand_and_rerank
 
                 graph_store = GraphStore.load(graph_path)
-                # Use the full extended pool (top_k * 3 unique files) as seeds
-                # so graph-adjacent files just outside top_k still have cos_norm scores
+
+                # Augment ext_pool with 1-hop graph neighbors not yet retrieved.
+                # Files like concrete strategy classes referenced by the seed file
+                # may never appear in ChromaDB's top-N results, yet are structurally
+                # adjacent. Fetch them specifically so they get real cosine scores
+                # and the fusion re-ranker can surface them.
+                try:
+                    import networkx as _nx
+                    _g_undir = graph_store._g.to_undirected()
+                    _missing: set[str] = set()
+                    for _fp in list(ext_pool.keys()):
+                        if _fp in _g_undir:
+                            for _nb in _g_undir.neighbors(_fp):
+                                if _nb not in ext_pool:
+                                    _missing.add(_nb)
+                    if _missing:
+                        _adj = collection.query(
+                            query_embeddings=[q_embedding],
+                            n_results=min(len(_missing) * 3, 90),
+                            where={"source": {"$in": list(_missing)}},
+                            include=["documents", "metadatas", "distances"],
+                        )
+                        _before = len(ext_pool)
+                        for _doc, _meta, _dist in zip(
+                            _adj.get("documents", [[]])[0],
+                            _adj.get("metadatas", [[]])[0],
+                            _adj.get("distances", [[]])[0],
+                        ):
+                            _src = _meta.get("source", "")
+                            if _src and _src not in ext_pool:
+                                ext_pool[_src] = (_doc, _meta, _dist)
+                        log(
+                            f"[query_engine] Graph expansion: added "
+                            f"{len(ext_pool) - _before} adjacent files to pool"
+                        )
+                except Exception as _adj_exc:
+                    log(f"[query_engine] Adjacent-file expansion failed (non-fatal): {_adj_exc}")
+
+                # Use the full extended + adjacent pool as seeds
                 seeds = [
                     SeedResult(
                         file_path=fp,
