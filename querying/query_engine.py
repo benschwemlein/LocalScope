@@ -288,6 +288,48 @@ def run_query(
     metas = [r[1] for r in deduped]
     dists = [r[2] for r in deduped]
 
+    # Graph-hybrid fusion: expand and re-rank seeds via structural graph traversal
+    if config.GRAPH_ENABLED:
+        graph_path = os.path.join(index_dir, "graph.json")
+        if os.path.exists(graph_path):
+            try:
+                from graph.graph_store import GraphStore, GraphLoadError
+                from graph.fusion import SeedResult, expand_and_rerank
+
+                graph_store = GraphStore.load(graph_path)
+                seeds = [
+                    SeedResult(
+                        file_path=m.get("source", ""),
+                        cos_distance=d,
+                        content_snippet=doc[:500],
+                    )
+                    for doc, m, d in zip(docs, metas, dists)
+                    if m.get("source")
+                ]
+                fused = expand_and_rerank(
+                    seeds,
+                    query_for_embedding,
+                    graph_store,
+                    alpha=config.GRAPH_ALPHA,
+                    beta=config.GRAPH_BETA,
+                )
+                if fused:
+                    fused_paths = [r.file_path for r in fused[:top_k]]
+                    # Rebuild docs/metas/dists in fused order, keeping originals
+                    path_to_doc = {m.get("source", ""): (d, m, doc) for d, m, doc in zip(docs, metas, dists)}
+                    new_docs, new_metas, new_dists = [], [], []
+                    for fp in fused_paths:
+                        if fp in path_to_doc:
+                            d, m, doc = path_to_doc[fp]
+                            new_docs.append(doc)
+                            new_metas.append(m)
+                            new_dists.append(d)
+                    if new_docs:
+                        docs, metas, dists = new_docs, new_metas, new_dists
+                        log(f"[query_engine] Graph fusion reranked {len(docs)} results")
+            except Exception as exc:
+                log(f"[query_engine] Graph fusion failed, falling back to vector-only: {exc}")
+
     scores = _compute_relative_scores(dists)
 
     count = len(metas)
