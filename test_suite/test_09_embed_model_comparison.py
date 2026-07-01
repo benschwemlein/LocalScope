@@ -22,8 +22,10 @@ from test_04_semantic_eval import GROUND_TRUTH, precision_at_k, recall_at_k, mrr
 
 
 EMBED_MODELS = [
-    "nomic-embed-text",
-    "mxbai-embed-large",
+    "nomic-embed-text",          # 274 MB — current default, general purpose
+    "mxbai-embed-large",         # 669 MB — strong MTEB scores, general purpose
+    "snowflake-arctic-embed2",   # 568 MB — trained specifically for retrieval tasks
+    "bge-m3",                    # 1.2 GB — top MTEB, strong on technical content
 ]
 
 

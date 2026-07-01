@@ -24,8 +24,9 @@ from test_07_answer_quality import (
 )
 
 CHAT_MODELS = [
-    "qwen2.5:7b",    # pre-Zack baseline (prior default)
-    "qwen3.6:27b",   # Zack's top code/dev pick — dense 27B (17 GB)
+    "qwen2.5:7b",    # default — best overall for RAG code Q&A
+    "qwen3.6:27b",   # Zack's top pick for agentic tasks; thinking mode hurts RAG scoring
+    "gemma4:12b",    # Google Gemma 4 12B — fast but trails on most queries
 ]
 
 
