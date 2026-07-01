@@ -16,8 +16,8 @@ and testing of each story. Each task ships as its own git commit per plan.md.
 
 **Purpose**: Create the `graph/` package skeleton so all subsequent tasks have a home.
 
-- [ ] T001 Create `graph/__init__.py` and `graph/plugins/__init__.py` package markers
-- [ ] T002 Add `networkx`, `tree-sitter`, `tree-sitter-java`, `tree-sitter-typescript`, `tree-sitter-html`, `python-Levenshtein` to project dependencies (requirements.txt or pyproject.toml)
+- [x] T001 Create `graph/__init__.py` and `graph/plugins/__init__.py` package markers
+- [x] T002 Add `networkx`, `tree-sitter`, `tree-sitter-java`, `tree-sitter-typescript`, `tree-sitter-html`, `python-Levenshtein` to project dependencies (requirements.txt or pyproject.toml)
 
 **Checkpoint**: `graph/` and `graph/plugins/` directories exist and are importable.
 
@@ -30,8 +30,8 @@ graph store. No user story work can begin until these two modules exist.
 
 **⚠️ CRITICAL**: US1, US2, US3, and US4 all depend on this phase.
 
-- [ ] T003 Create `graph/edge.py` — `EdgeType` enum (IMPORTS, INVOKES, INHERITS, REFERENCES, CONTAINS) and `Edge` dataclass (source, target, edge_type, weight=1.0) per `data-model.md`
-- [ ] T004 Create `graph/plugin_registry.py` — `LanguagePlugin` ABC with `extensions: list[str]` and `extract_edges(file_path, source) -> list[Edge]`; `PluginRegistry` with `register()` and `get(ext)`; module-level `default_registry` instance; per `contracts/plugin-interface.md`
+- [x] T003 Create `graph/edge.py` — `EdgeType` enum (IMPORTS, INVOKES, INHERITS, REFERENCES, CONTAINS) and `Edge` dataclass (source, target, edge_type, weight=1.0) per `data-model.md`
+- [x] T004 Create `graph/plugin_registry.py` — `LanguagePlugin` ABC with `extensions: list[str]` and `extract_edges(file_path, source) -> list[Edge]`; `PluginRegistry` with `register()` and `get(ext)`; module-level `default_registry` instance; per `contracts/plugin-interface.md`
 
 **Checkpoint**: `from graph.edge import Edge, EdgeType` and `from graph.plugin_registry import default_registry` both import without error.
 
@@ -48,14 +48,14 @@ to the query text surfaces all connected files via graph traversal and KGCompass
 
 ### Implementation for User Story 1
 
-- [ ] T005 [P] [US1] Create `graph/plugins/java_plugin.py` — tree-sitter-java parser; extract IMPORTS (import_declaration), INHERITS (superclass/super_interfaces), INVOKES (method_invocation resolvable to repo file), CONTAINS (class→method); register `.java` in `default_registry`; return `[]` on parse error; per `contracts/plugin-interface.md`
-- [ ] T006 [P] [US1] Create `graph/plugins/typescript_plugin.py` — tree-sitter-typescript parser; extract IMPORTS (import_statement, static only; dynamic best-effort), INHERITS (class_heritage extends/implements), INVOKES (call_expression resolvable to repo file), CONTAINS (class→method); register `.ts`, `.tsx` in `default_registry`
-- [ ] T007 [P] [US1] Create `graph/plugins/html_plugin.py` — tree-sitter-html parser; extract REFERENCES edges for Angular component selectors and `*ngDirective` attributes; set `edge.weight = 0.7`; register `.html` in `default_registry`
-- [ ] T008 [US1] Create `graph/graph_store.py` — wraps `networkx.DiGraph`; implement `add_edges(edges)`, `remove_file(path)`, `shortest_path_length(source, target) -> float` (Dijkstra via `nx.single_source_dijkstra_path_length`; returns `math.inf` if unreachable), `save(path)` (node-link JSON), `load(path) -> GraphStore` (raises `GraphLoadError` on corrupt file); per `data-model.md`
-- [ ] T009 [US1] Create `graph/graph_builder.py` — iterate repo files; resolve plugin by extension from `default_registry`; track file content hashes in `graph_hashes.json`; skip unchanged files; call `graph_store.remove_file` then re-add edges for changed files; call `graph_store.remove_file` for deleted files; per `data-model.md` and `contracts/plugin-interface.md`
-- [ ] T010 [US1] Create `graph/fusion.py` — implement `expand_and_rerank(seeds, query_text, graph_store, alpha=0.3, beta=0.6, max_hops=3) -> list[FusionResult]`; Dijkstra expansion from each seed up to `max_hops`; score each candidate using `beta^l * (alpha * cos_norm + (1-alpha) * lev)`; exclude candidates with no cosine score; return sorted descending; per `contracts/fusion-api.md`
-- [ ] T011 [US1] Modify `config.py` — add `GRAPH_ENABLED = env("LCQ_GRAPH_ENABLED", "false").lower() == "true"`, `GRAPH_ALPHA = float(env("LCQ_GRAPH_ALPHA", "0.3"))`, `GRAPH_BETA = float(env("LCQ_GRAPH_BETA", "0.6"))`
-- [ ] T012 [US1] Modify `querying/query_engine.py` — after ChromaDB retrieval, if `config.GRAPH_ENABLED` and graph file exists, load `GraphStore` and call `fusion.expand_and_rerank`; catch `GraphLoadError` and any exception and fall back to vector-only results; per `contracts/fusion-api.md`
+- [x] T005 [P] [US1] Create `graph/plugins/java_plugin.py` — tree-sitter-java parser; extract IMPORTS (import_declaration), INHERITS (superclass/super_interfaces), INVOKES (method_invocation resolvable to repo file), CONTAINS (class→method); register `.java` in `default_registry`; return `[]` on parse error; per `contracts/plugin-interface.md`
+- [x] T006 [P] [US1] Create `graph/plugins/typescript_plugin.py` — tree-sitter-typescript parser; extract IMPORTS (import_statement, static only; dynamic best-effort), INHERITS (class_heritage extends/implements), INVOKES (call_expression resolvable to repo file), CONTAINS (class→method); register `.ts`, `.tsx` in `default_registry`
+- [x] T007 [P] [US1] Create `graph/plugins/html_plugin.py` — tree-sitter-html parser; extract REFERENCES edges for Angular component selectors and `*ngDirective` attributes; set `edge.weight = 0.7`; register `.html` in `default_registry`
+- [x] T008 [US1] Create `graph/graph_store.py` — wraps `networkx.DiGraph`; implement `add_edges(edges)`, `remove_file(path)`, `shortest_path_length(source, target) -> float` (Dijkstra via `nx.single_source_dijkstra_path_length`; returns `math.inf` if unreachable), `save(path)` (node-link JSON), `load(path) -> GraphStore` (raises `GraphLoadError` on corrupt file); per `data-model.md`
+- [x] T009 [US1] Create `graph/graph_builder.py` — iterate repo files; resolve plugin by extension from `default_registry`; track file content hashes in `graph_hashes.json`; skip unchanged files; call `graph_store.remove_file` then re-add edges for changed files; call `graph_store.remove_file` for deleted files; per `data-model.md` and `contracts/plugin-interface.md`
+- [x] T010 [US1] Create `graph/fusion.py` — implement `expand_and_rerank(seeds, query_text, graph_store, alpha=0.3, beta=0.6, max_hops=3) -> list[FusionResult]`; Dijkstra expansion from each seed up to `max_hops`; score each candidate using `beta^l * (alpha * cos_norm + (1-alpha) * lev)`; exclude candidates with no cosine score; return sorted descending; per `contracts/fusion-api.md`
+- [x] T011 [US1] Modify `config.py` — add `GRAPH_ENABLED = env("LCQ_GRAPH_ENABLED", "false").lower() == "true"`, `GRAPH_ALPHA = float(env("LCQ_GRAPH_ALPHA", "0.3"))`, `GRAPH_BETA = float(env("LCQ_GRAPH_BETA", "0.6"))`
+- [x] T012 [US1] Modify `querying/query_engine.py` — after ChromaDB retrieval, if `config.GRAPH_ENABLED` and graph file exists, load `GraphStore` and call `fusion.expand_and_rerank`; catch `GraphLoadError` and any exception and fall back to vector-only results; per `contracts/fusion-api.md`
 
 **Checkpoint**: With `LCQ_GRAPH_ENABLED=true`, query "how does the system calculate overdue fines for different member types" returns strategy files in top-10. Strategy files absent with `LCQ_GRAPH_ENABLED=false`.
 
@@ -71,7 +71,7 @@ Log output shows exactly one file processed. Incremental update completes in ≤
 
 ### Implementation for User Story 2
 
-- [ ] T013 [US2] Modify `indexing/incremental_indexer.py` — after embedding pass completes, if `config.GRAPH_ENABLED`, call `graph_builder.build_incremental(repo_root, graph_path, changed_files)` where `graph_path = {index_dir}/graph.json`; skip graph build if `GRAPH_ENABLED=false`; depends on T009, T011
+- [x] T013 [US2] Modify `indexing/incremental_indexer.py` — after embedding pass completes, if `config.GRAPH_ENABLED`, call `graph_builder.build_incremental(repo_root, graph_path, changed_files)` where `graph_path = {index_dir}/graph.json`; skip graph build if `GRAPH_ENABLED=false`; depends on T009, T011
 
 **Checkpoint**: Run `python cli/index.py --repo /path/to/library-catalog-app` twice. Second run log shows 0 graph files re-processed (all hashes match). Edit one file; third run shows exactly 1 file re-processed and graph saved.
 
@@ -108,7 +108,7 @@ scores differ from α=0.3/β=0.6 defaults. Set back to defaults; scores match ba
 
 ### Implementation for User Story 4
 
-- [ ] T014 [US4] Create `test_suite/test_10_graph_retrieval.py` — session fixture sets `LCQ_GRAPH_ENABLED=true`; runs all 10 ground truth queries from test_04 with graph enabled; reports P@5, R@10, MRR with delta vs test_04 baseline; hard assertions: fine_calculation_strategy R@10 ≥ 0.80 (SC-001), loan_eligibility_chain R@10 ≥ 0.80 (SC-002), mean R@10 ≥ 0.70 (SC-003), mean P@5 ≥ 0.50 (SC-004), mean MRR ≥ 0.88 (SC-005); regression guard for 9 passing test_04 cases (SC-006); timing assertions for full build ≤ 60s (SC-007) and incremental ≤ 5s (SC-008); parametrized α/β sweep: α ∈ {0.1, 0.3, 0.5, 0.7} × β ∈ {0.4, 0.6, 0.8} reporting best mean R@10
+- [x] T014 [US4] Create `test_suite/test_10_graph_retrieval.py` — session fixture sets `LCQ_GRAPH_ENABLED=true`; runs all 10 ground truth queries from test_04 with graph enabled; reports P@5, R@10, MRR with delta vs test_04 baseline; hard assertions: fine_calculation_strategy R@10 ≥ 0.80 (SC-001), loan_eligibility_chain R@10 ≥ 0.80 (SC-002), mean R@10 ≥ 0.70 (SC-003), mean P@5 ≥ 0.50 (SC-004), mean MRR ≥ 0.88 (SC-005); regression guard for 9 passing test_04 cases (SC-006); timing assertions for full build ≤ 60s (SC-007) and incremental ≤ 5s (SC-008); parametrized α/β sweep: α ∈ {0.1, 0.3, 0.5, 0.7} × β ∈ {0.4, 0.6, 0.8} reporting best mean R@10
 
 **Checkpoint**: `LCQ_GRAPH_ENABLED=true pytest test_suite/test_10_graph_retrieval.py -v` runs all assertions. Parametrized sweep outputs α/β combination rankings.
 
