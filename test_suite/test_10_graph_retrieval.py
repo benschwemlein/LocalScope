@@ -95,7 +95,6 @@ def graph_query_results(graph_app):
 def test_sc001_fine_calculation_strategy(graph_query_results):
     """SC-001: fine_calculation_strategy R@10 >= 0.80 (baseline was 0.20)."""
     sources = graph_query_results["fine_calculation_strategy"]
-    expected = {c.expected_files for c in GROUND_TRUTH if c.name == "fine_calculation_strategy"}
     expected_flat = set(GROUND_TRUTH[2].expected_files)  # index 2 = fine_calculation_strategy
     r10 = recall_at_k(sources, expected_flat, 10)
     assert r10 >= 0.80, (

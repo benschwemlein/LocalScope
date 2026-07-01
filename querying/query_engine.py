@@ -305,8 +305,9 @@ def run_query(
                 try:
                     import networkx as _nx
                     _g_undir = graph_store._g.to_undirected()
+                    _orig_pool: set[str] = set(ext_pool.keys())
                     _missing: set[str] = set()
-                    for _fp in list(ext_pool.keys()):
+                    for _fp in _orig_pool:
                         if _fp in _g_undir:
                             for _nb in _g_undir.neighbors(_fp):
                                 if _nb not in ext_pool:
@@ -331,6 +332,46 @@ def run_query(
                             f"[query_engine] Graph expansion: added "
                             f"{len(ext_pool) - _before} adjacent files to pool"
                         )
+
+                    # Graph-proximity boost: reduce the effective cosine distance
+                    # of any file that is structurally adjacent (via REFERENCES or
+                    # INHERITS edges) to a high-quality original vector seed.
+                    # Covers BOTH newly-discovered adjacent files AND files already
+                    # in the original pool that happen to be structurally close to
+                    # a top seed (e.g. a strategy class whose interface user was
+                    # retrieved by vector search).
+                    # IMPORTS edges are excluded: they can connect to loosely-related
+                    # utility or entity classes and cause false-positive boosts.
+                    _beta = config.GRAPH_BETA
+                    _BOOST_EDGE_TYPES = frozenset({"REFERENCES", "INHERITS"})
+                    _dg = graph_store._g  # directed graph for edge-type lookup
+                    # Quality threshold: only boost from orig_pool seeds whose
+                    # cosine distance is in the better half of the pool.
+                    _orig_dists = sorted(ext_pool[fp][2] for fp in _orig_pool)
+                    _quality_threshold = _orig_dists[len(_orig_dists) // 2] if _orig_dists else 1.0
+                    for _af in list(ext_pool.keys()):
+                        if _af not in _g_undir:
+                            continue
+                        _best_seed_dist: float | None = None
+                        for _nb in _g_undir.neighbors(_af):
+                            if _nb == _af:
+                                continue
+                            if _nb not in _orig_pool:
+                                continue  # only boost from original vector seeds
+                            if ext_pool[_nb][2] >= _quality_threshold:
+                                continue  # skip low-quality seeds
+                            _ed = _dg.get_edge_data(_nb, _af) or _dg.get_edge_data(_af, _nb)
+                            if _ed and _ed.get("edge_type") in _BOOST_EDGE_TYPES:
+                                _sd = ext_pool[_nb][2]
+                                if _best_seed_dist is None or _sd < _best_seed_dist:
+                                    _best_seed_dist = _sd
+                        if _best_seed_dist is None:
+                            continue
+                        _raw_dist = ext_pool[_af][2]
+                        _boosted_dist = min(_raw_dist, _best_seed_dist * _beta)
+                        if _boosted_dist < _raw_dist:
+                            _doc_af, _meta_af, _ = ext_pool[_af]
+                            ext_pool[_af] = (_doc_af, _meta_af, _boosted_dist)
                 except Exception as _adj_exc:
                     log(f"[query_engine] Adjacent-file expansion failed (non-fatal): {_adj_exc}")
 
