@@ -1,0 +1,8 @@
+chromadb
+requests
+networkx
+tree-sitter
+tree-sitter-java
+tree-sitter-typescript
+tree-sitter-html
+python-Levenshtein
