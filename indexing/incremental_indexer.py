@@ -323,7 +323,18 @@ def index_repo_incremental(
                     log(f"✗ {result['rel_path']}: {result.get('error', 'Unknown error')}")
     
     elapsed_time = time.time() - start_time
-    
+
+    # Graph index pass (after embedding pass)
+    import config as _config
+    if _config.GRAPH_ENABLED:
+        try:
+            from graph.graph_builder import build_incremental
+            graph_path = os.path.join(index_dir, "graph.json")
+            changed = [r[0] for r in files_to_process] if files_to_process else None
+            build_incremental(repo_root, graph_path, changed_files=changed, log_fn=log)
+        except Exception as e:
+            log(f"[incremental_indexer] Graph build failed (non-fatal): {e}")
+
     log("")
     log("DONE.")
     log(f"Files processed: {total_files_processed}")
