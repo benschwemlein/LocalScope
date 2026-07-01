@@ -334,22 +334,31 @@ def run_query(
                         )
 
                     # Graph-proximity boost: reduce the effective cosine distance
-                    # of any file that is structurally adjacent (via REFERENCES or
-                    # INHERITS edges) to a high-quality original vector seed.
-                    # Covers BOTH newly-discovered adjacent files AND files already
-                    # in the original pool that happen to be structurally close to
-                    # a top seed (e.g. a strategy class whose interface user was
-                    # retrieved by vector search).
-                    # IMPORTS edges are excluded: they can connect to loosely-related
-                    # utility or entity classes and cause false-positive boosts.
+                    # of expanded files (graph neighbors not in the vector top-N)
+                    # that are structurally adjacent via REFERENCES or INHERITS to
+                    # one of the top-3 vector seeds.
+                    #
+                    # Only EXPANDED files are boosted — orig_pool files keep their
+                    # natural vector distances so P@5 and MRR are not degraded for
+                    # queries where vector search already performs well.
+                    #
+                    # Only the top-3 seeds may propagate the boost. This prevents
+                    # tangentially-related seeds (e.g. OverdueFineContext appearing
+                    # in a loan-checkout query pool) from pulling in fine-domain
+                    # files and displacing genuinely relevant checkout files.
+                    #
+                    # IMPORTS edges are excluded: they link to loosely-related
+                    # utility/entity classes across package boundaries.
                     _beta = config.GRAPH_BETA
                     _BOOST_EDGE_TYPES = frozenset({"REFERENCES", "INHERITS"})
                     _dg = graph_store._g  # directed graph for edge-type lookup
-                    # Quality threshold: only boost from orig_pool seeds whose
-                    # cosine distance is in the better half of the pool.
                     _orig_dists = sorted(ext_pool[fp][2] for fp in _orig_pool)
-                    _quality_threshold = _orig_dists[len(_orig_dists) // 2] if _orig_dists else 1.0
+                    _N_SEEDS = 3
+                    _idx = min(_N_SEEDS - 1, len(_orig_dists) - 1)
+                    _quality_threshold = _orig_dists[_idx] if _orig_dists else 1.0
                     for _af in list(ext_pool.keys()):
+                        if _af in _orig_pool:
+                            continue  # only boost newly-expanded files
                         if _af not in _g_undir:
                             continue
                         _best_seed_dist: float | None = None
@@ -358,8 +367,8 @@ def run_query(
                                 continue
                             if _nb not in _orig_pool:
                                 continue  # only boost from original vector seeds
-                            if ext_pool[_nb][2] >= _quality_threshold:
-                                continue  # skip low-quality seeds
+                            if ext_pool[_nb][2] > _quality_threshold:
+                                continue  # only top-3 seeds may propagate
                             _ed = _dg.get_edge_data(_nb, _af) or _dg.get_edge_data(_af, _nb)
                             if _ed and _ed.get("edge_type") in _BOOST_EDGE_TYPES:
                                 _sd = ext_pool[_nb][2]
