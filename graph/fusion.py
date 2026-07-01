@@ -42,17 +42,20 @@ def expand_and_rerank(
     }
     snippet_map: dict[str, str] = {s.file_path: s.content_snippet for s in seeds}
 
-    # Dijkstra expansion from each seed
-    # path_dist_map: file_path → shortest hop distance from any seed
+    # Undirected BFS expansion from each seed so that both IMPORTS edges
+    # (A→B) and INHERITS edges (implementor→interface) are traversable in
+    # either direction. This lets us find concrete implementors from a seed
+    # that uses the interface (e.g. OverdueFineContext → strategy impls).
     path_dist_map: dict[str, float] = {}
 
     g = graph_store._g
+    g_undir = g.to_undirected()
     for seed in seeds:
-        if seed.file_path not in g:
+        if seed.file_path not in g_undir:
             path_dist_map.setdefault(seed.file_path, 0.0)
             continue
         try:
-            lengths = nx.single_source_shortest_path_length(g, seed.file_path, cutoff=max_hops)
+            lengths = nx.single_source_shortest_path_length(g_undir, seed.file_path, cutoff=max_hops)
         except nx.NodeNotFound:
             path_dist_map.setdefault(seed.file_path, 0.0)
             continue

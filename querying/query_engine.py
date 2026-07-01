@@ -272,21 +272,20 @@ def run_query(
         log("[query_engine] No relevant snippets found in the index.")
         raise RuntimeError("No relevant snippets found in the index.")
 
-    # Deduplicate by source file — keep only the best-scoring chunk per file.
-    # This prevents one large file from flooding all top-k slots.
-    seen_sources: set[str] = set()
-    deduped: list[tuple] = []
+    # Deduplicate by source file — build comprehensive map first, then slice top_k.
+    # The full map is used as the seed pool for graph fusion so graph-adjacent
+    # files that rank 11–30 in the vector pass can still get cosine scores.
+    ext_pool: dict[str, tuple] = {}  # source → (doc, meta, dist)
     for doc, meta, dist in zip(docs_list[0], metas_list[0], dist_list[0]):
         source = meta.get("source", "")
-        if source not in seen_sources:
-            seen_sources.add(source)
-            deduped.append((doc, meta, dist))
-        if len(deduped) == top_k:
-            break
+        if source and source not in ext_pool:
+            ext_pool[source] = (doc, meta, dist)
 
-    docs  = [r[0] for r in deduped]
-    metas = [r[1] for r in deduped]
-    dists = [r[2] for r in deduped]
+    # Top-k slice for the non-fusion path and as initial ordering
+    top_pool = list(ext_pool.values())[:top_k]
+    docs  = [r[0] for r in top_pool]
+    metas = [r[1] for r in top_pool]
+    dists = [r[2] for r in top_pool]
 
     # Graph-hybrid fusion: expand and re-rank seeds via structural graph traversal
     if config.GRAPH_ENABLED:
@@ -297,14 +296,15 @@ def run_query(
                 from graph.fusion import SeedResult, expand_and_rerank
 
                 graph_store = GraphStore.load(graph_path)
+                # Use the full extended pool (top_k * 3 unique files) as seeds
+                # so graph-adjacent files just outside top_k still have cos_norm scores
                 seeds = [
                     SeedResult(
-                        file_path=m.get("source", ""),
+                        file_path=fp,
                         cos_distance=d,
                         content_snippet=doc[:500],
                     )
-                    for doc, m, d in zip(docs, metas, dists)
-                    if m.get("source")
+                    for fp, (doc, _meta, d) in ext_pool.items()
                 ]
                 fused = expand_and_rerank(
                     seeds,
@@ -315,14 +315,13 @@ def run_query(
                 )
                 if fused:
                     fused_paths = [r.file_path for r in fused[:top_k]]
-                    # Rebuild docs/metas/dists in fused order, keeping originals
-                    path_to_doc = {m.get("source", ""): (d, m, doc) for d, m, doc in zip(docs, metas, dists)}
+                    # Rebuild docs/metas/dists from the comprehensive pool
                     new_docs, new_metas, new_dists = [], [], []
                     for fp in fused_paths:
-                        if fp in path_to_doc:
-                            d, m, doc = path_to_doc[fp]
+                        if fp in ext_pool:
+                            doc, meta, d = ext_pool[fp]
                             new_docs.append(doc)
-                            new_metas.append(m)
+                            new_metas.append(meta)
                             new_dists.append(d)
                     if new_docs:
                         docs, metas, dists = new_docs, new_metas, new_dists
