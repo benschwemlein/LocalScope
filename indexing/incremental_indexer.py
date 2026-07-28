@@ -335,6 +335,21 @@ def index_repo_incremental(
         except Exception as e:
             log(f"[incremental_indexer] Graph build failed (non-fatal): {e}")
 
+    # Lexical index pass (after embedding pass) — reuses the same changed/deleted
+    # file lists computed above, so no extra repo walk.
+    if _config.LEXICAL_ENABLED:
+        try:
+            from indexing.lexical_index import update_lexical_index_incremental
+            lexical_changed = [(rel, full) for rel, full, _hash in files_to_process]
+            update_lexical_index_incremental(
+                index_dir,
+                changed_files=lexical_changed,
+                deleted_files=files_to_delete,
+                log=log,
+            )
+        except Exception as e:
+            log(f"[incremental_indexer] Lexical index update failed (non-fatal): {e}")
+
     log("")
     log("DONE.")
     log(f"Files processed: {total_files_processed}")

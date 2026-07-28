@@ -369,6 +369,15 @@ def index_repo(
             if file_count % 50 == 0:
                 log(f"Processed {file_count} files...")
 
+    if config.LEXICAL_ENABLED:
+        try:
+            from indexing.lexical_index import build_lexical_index
+            build_lexical_index(
+                repo_root, index_dir, index_exts=index_exts, excluded_dirs=excluded_dirs, log=log
+            )
+        except Exception as e:
+            log(f"[index_repo] Lexical index build failed (non-fatal): {e}")
+
     log("")
     log("DONE.")
     log(f"Files processed: {file_count}")

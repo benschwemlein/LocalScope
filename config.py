@@ -40,3 +40,6 @@ DEFAULT_REPO_ROOT = env("LCQ_REPO_ROOT", "")
 
 # Graph retrieval (hybrid vector + structural)
 GRAPH_ENABLED = env("LCQ_GRAPH_ENABLED", "false").lower() == "true"
+
+# Lexical retrieval (identifier full-text index)
+LEXICAL_ENABLED = env("LCQ_LEXICAL_ENABLED", "false").lower() == "true"
