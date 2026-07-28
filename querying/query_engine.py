@@ -237,61 +237,158 @@ def run_query(
         if step_callback:
             step_callback(n, label)
 
-    query_for_embedding = bug
-    if len(bug) > max_chars:
+    # Symbol-anchored routing: "who calls X", "what implements Y" etc. skip
+    # vector search entirely and dispatch straight to a precanned graph query
+    # (querying/router.py). Falls through to the conceptual (vector) path
+    # below if graph retrieval is disabled, unavailable, the question doesn't
+    # match a known pattern, or the resolved files aren't in this index.
+    routed = None
+    if config.GRAPH_ENABLED:
+        graph_path = os.path.join(index_dir, "graph.json")
+        if os.path.exists(graph_path):
+            try:
+                from graph.graph_store import GraphStore, GraphLoadError
+                from querying.router import route_query
+
+                graph_store = GraphStore.load(graph_path)
+                routed = route_query(bug, graph_store)
+                if routed:
+                    log(
+                        f"[query_engine] Routed to graph query '{routed.operation}': "
+                        f"{len(routed.files)} file(s)"
+                    )
+            except GraphLoadError as e:
+                log(f"[query_engine] Graph unavailable, falling back to vector search: {e}")
+            except Exception as e:
+                log(f"[query_engine] Routing failed (non-fatal), falling back to vector search: {e}")
+
+    if routed is not None:
         if _cancelled():
             raise RuntimeError("Cancelled.")
-        log(f"[query_engine] Bug text is {len(bug)} chars, summarizing before embedding...")
-        _step(1, "Summarizing...")
-        query_for_embedding = _summarize_query(bug, summarizer_template, log)
+        _step(1, "Querying graph...")
 
-    if _cancelled():
-        raise RuntimeError("Cancelled.")
+        fetched = collection.get(
+            where={"source": {"$in": routed.files}},
+            include=["documents", "metadatas"],
+        )
+        by_source: dict[str, tuple] = {}
+        for doc, meta in zip(fetched.get("documents", []), fetched.get("metadatas", [])):
+            source = meta.get("source", "")
+            idx = meta.get("chunk_index", 0)
+            if source and (source not in by_source or idx < by_source[source][1].get("chunk_index", 0)):
+                by_source[source] = (doc, meta)
 
-    _step(1 if len(bug) <= max_chars else 2, "Embedding...")
-    log("[query_engine] Embedding query text...")
-    q_embedding = _embed_text(query_for_embedding, log)
-    if q_embedding is None:
-        raise RuntimeError("Failed to obtain embedding from Ollama.")
+        docs, metas = [], []
+        for f in routed.files:
+            if f in by_source:
+                doc, meta = by_source[f]
+                docs.append(doc)
+                metas.append(meta)
 
-    _step(2, "Searching index...")
-    log(f"[query_engine] Querying index for top {top_k} snippets...")
+        if not docs:
+            log(
+                "[query_engine] Graph query resolved files but none are in this "
+                "index; falling back to vector search."
+            )
+            routed = None
+        else:
+            # Graph hits are exact structural matches, not similarity-ranked —
+            # a uniform distance keeps the relative score flat rather than
+            # implying a ranking that doesn't exist.
+            dists = [0.0] * len(docs)
 
-    # Fetch more candidates so deduplication still yields top_k results
-    res = collection.query(
-        query_embeddings=[q_embedding],
-        n_results=top_k * 3,
-        include=["documents", "metadatas", "distances"],
-    )
+    if routed is None:
+        query_for_embedding = bug
+        if len(bug) > max_chars:
+            if _cancelled():
+                raise RuntimeError("Cancelled.")
+            log(f"[query_engine] Bug text is {len(bug)} chars, summarizing before embedding...")
+            _step(1, "Summarizing...")
+            query_for_embedding = _summarize_query(bug, summarizer_template, log)
 
-    docs_list = res.get("documents", [[]])
-    metas_list = res.get("metadatas", [[]])
-    dist_list = res.get("distances", [[]])
+        if _cancelled():
+            raise RuntimeError("Cancelled.")
 
-    if not docs_list or not docs_list[0]:
-        log("[query_engine] No relevant snippets found in the index.")
-        raise RuntimeError("No relevant snippets found in the index.")
+        _step(1 if len(bug) <= max_chars else 2, "Embedding...")
+        log("[query_engine] Embedding query text...")
+        q_embedding = _embed_text(query_for_embedding, log)
+        if q_embedding is None:
+            raise RuntimeError("Failed to obtain embedding from Ollama.")
 
-    # Deduplicate by source file — keep only the best-scoring chunk per file.
-    # This prevents one large file from flooding all top-k slots.
-    seen_sources: set[str] = set()
-    deduped: list[tuple] = []
-    for doc, meta, dist in zip(docs_list[0], metas_list[0], dist_list[0]):
-        source = meta.get("source", "")
-        if source and source not in seen_sources:
-            seen_sources.add(source)
-            deduped.append((doc, meta, dist))
+        _step(2, "Searching index...")
+        log(f"[query_engine] Querying index for top {top_k} snippets...")
 
-    top_pool = deduped[:top_k]
-    docs  = [r[0] for r in top_pool]
-    metas = [r[1] for r in top_pool]
-    dists = [r[2] for r in top_pool]
+        # Fetch more candidates so deduplication still yields top_k results
+        res = collection.query(
+            query_embeddings=[q_embedding],
+            n_results=top_k * 3,
+            include=["documents", "metadatas", "distances"],
+        )
 
-    # TODO(graph-routing): symbol-anchored queries should route to the precanned
-    # graph queries (callers-of, callees-of, implementations-of, references-to,
-    # path-between, contents-of) instead of vector search; conceptual queries
-    # should expand these vector hits one hop along graph edges. See
-    # architecture-dossier-2026-07.md in hybrid_graph_llm for the design.
+        docs_list = res.get("documents", [[]])
+        metas_list = res.get("metadatas", [[]])
+        dist_list = res.get("distances", [[]])
+
+        if not docs_list or not docs_list[0]:
+            log("[query_engine] No relevant snippets found in the index.")
+            raise RuntimeError("No relevant snippets found in the index.")
+
+        # Deduplicate by source file — keep only the best-scoring chunk per file.
+        # This prevents one large file from flooding all top-k slots.
+        seen_sources: set[str] = set()
+        deduped: list[tuple] = []
+        for doc, meta, dist in zip(docs_list[0], metas_list[0], dist_list[0]):
+            source = meta.get("source", "")
+            if source and source not in seen_sources:
+                seen_sources.add(source)
+                deduped.append((doc, meta, dist))
+
+        top_pool = deduped[:top_k]
+        docs  = [r[0] for r in top_pool]
+        metas = [r[1] for r in top_pool]
+        dists = [r[2] for r in top_pool]
+
+        # Graph expansion: pull in files structurally adjacent (any edge type,
+        # either direction) to the top-3 vector hits, so files the embedding
+        # missed but that are directly connected still make it into context.
+        # Appended after the ranked vector hits, not score-blended with them —
+        # no published system fuses graph and vector scores into one ranking;
+        # sequential composition (vector picks seeds, graph expands them) is
+        # what the peer-reviewed literature converges on.
+        if config.GRAPH_ENABLED:
+            graph_path = os.path.join(index_dir, "graph.json")
+            if os.path.exists(graph_path):
+                try:
+                    from graph.graph_store import GraphStore
+                    from graph.queries import one_hop_neighbors
+
+                    graph_store = GraphStore.load(graph_path)
+                    neighbor_candidates: set[str] = set()
+                    for meta in metas[:3]:
+                        seed_source = meta.get("source", "")
+                        if seed_source:
+                            neighbor_candidates.update(one_hop_neighbors(graph_store, seed_source))
+                    neighbor_candidates -= seen_sources
+
+                    if neighbor_candidates:
+                        fetched = collection.get(
+                            where={"source": {"$in": list(neighbor_candidates)}},
+                            include=["documents", "metadatas"],
+                        )
+                        worst_dist = max(dists) if dists else 1.0
+                        added = 0
+                        for doc, meta in zip(fetched.get("documents", []), fetched.get("metadatas", [])):
+                            source = meta.get("source", "")
+                            if source and source not in seen_sources and len(docs) < top_k * 2:
+                                seen_sources.add(source)
+                                docs.append(doc)
+                                metas.append(meta)
+                                dists.append(worst_dist)
+                                added += 1
+                        if added:
+                            log(f"[query_engine] Graph expansion added {added} structurally adjacent file(s)")
+                except Exception as e:
+                    log(f"[query_engine] Graph expansion failed (non-fatal): {e}")
 
     scores = _compute_relative_scores(dists)
 
