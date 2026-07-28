@@ -38,6 +38,30 @@ def graph_app(indexed_app):
     return {**indexed_app, "graph_path": graph_path}
 
 
+@pytest.fixture(scope="session")
+def lexical_app(indexed_app):
+    """Build the lexical index on top of the shared ChromaDB session index."""
+    from indexing.lexical_index import build_lexical_index
+
+    sample_path = indexed_app["sample_app_path"]
+    index_dir = indexed_app["index_dir"]
+
+    build_lexical_index(sample_path, index_dir, log=lambda _: None)
+
+    return indexed_app
+
+
+@pytest.fixture()
+def lexical_enabled():
+    """Temporarily flip config.LEXICAL_ENABLED on, restoring it afterward."""
+    import config
+
+    original = config.LEXICAL_ENABLED
+    config.LEXICAL_ENABLED = True
+    yield
+    config.LEXICAL_ENABLED = original
+
+
 @pytest.fixture()
 def graph_enabled():
     """Temporarily flip config.GRAPH_ENABLED on, restoring it afterward."""
@@ -169,3 +193,45 @@ def test_graph_disabled_never_routes(graph_app):
     assert not any("Routed to graph query" in line for line in logs), logs
     assert not any("Graph expansion added" in line for line in logs), logs
     assert result["docs"]
+
+
+# ---------------------------------------------------------------------------
+# Lexical merge: identifier-matched files the embedder missed
+# ---------------------------------------------------------------------------
+
+def test_lexical_merge_surfaces_identifier_match_on_conceptual_query(lexical_app, lexical_enabled):
+    """
+    A conceptual question that happens to name a specific class should find
+    that class's file via the identifier index even if vector search alone
+    ranks it low — this is the whole point of the lexical leg.
+    """
+    from querying.query_engine import run_query
+
+    logs = []
+    result = run_query(
+        bug_text="What does StudentFineStrategy do and how is it different from the other fine strategies?",
+        index_dir=lexical_app["index_dir"],
+        top_k=10,
+        log=logs.append,
+    )
+
+    sources = {m.get("source", "") for m in result["metas"]}
+    assert any("StudentFineStrategy.java" in s for s in sources)
+
+
+def test_lexical_disabled_does_not_merge(indexed_app):
+    """With LEXICAL_ENABLED left at its default (off), no lexical merge log
+    should appear even for a query naming a specific identifier."""
+    import config
+    from querying.query_engine import run_query
+
+    assert config.LEXICAL_ENABLED is False
+
+    logs = []
+    run_query(
+        bug_text="What does StudentFineStrategy do?",
+        index_dir=indexed_app["index_dir"],
+        top_k=10,
+        log=logs.append,
+    )
+    assert not any("Lexical search added" in line for line in logs), logs

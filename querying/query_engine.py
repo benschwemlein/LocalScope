@@ -348,6 +348,38 @@ def run_query(
         metas = [r[1] for r in top_pool]
         dists = [r[2] for r in top_pool]
 
+        # Lexical merge: append identifier-matched files the embedder missed.
+        # A symbol-ish term mentioned in passing within an otherwise
+        # conceptual question ("why is InvoiceProcessor slow?") often scores
+        # poorly on cosine similarity alone — the FTS index catches it
+        # directly. Appended after the vector pool, not score-blended, same
+        # rationale as the graph expansion below: no published system fuses
+        # these into one ranking.
+        if config.LEXICAL_ENABLED:
+            try:
+                from indexing.lexical_index import search_lexical
+
+                lexical_hits = search_lexical(index_dir, bug, limit=top_k)
+                new_sources = [src for src, _score in lexical_hits if src not in seen_sources]
+                if new_sources:
+                    fetched = collection.get(
+                        where={"source": {"$in": new_sources}},
+                        include=["documents", "metadatas"],
+                    )
+                    added = 0
+                    for doc, meta in zip(fetched.get("documents", []), fetched.get("metadatas", [])):
+                        source = meta.get("source", "")
+                        if source and source not in seen_sources and len(docs) < top_k * 2:
+                            seen_sources.add(source)
+                            docs.append(doc)
+                            metas.append(meta)
+                            dists.append(max(dists) if dists else 1.0)
+                            added += 1
+                    if added:
+                        log(f"[query_engine] Lexical search added {added} identifier-matched file(s)")
+            except Exception as e:
+                log(f"[query_engine] Lexical search failed (non-fatal): {e}")
+
         # Graph expansion: pull in files structurally adjacent (any edge type,
         # either direction) to the top-3 vector hits, so files the embedding
         # missed but that are directly connected still make it into context.
