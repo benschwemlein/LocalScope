@@ -6,7 +6,7 @@ A desktop application for running Retrieval Augmented Generation against any sou
 
 ### Why I built it
 
-Ramping onto a large, unfamiliar codebase is slow, and sending proprietary source to a cloud LLM is often off the table. I built this to ask plain-English questions about a codebase ("where is the credit-card application flow handled?", "why does this batch job run slowly?") and get back the exact files plus an explanation, entirely offline.
+Ramping onto a large, unfamiliar codebase is slow, and sending proprietary source to a cloud LLM is often off the table. I built this to ask plain-English questions about a codebase ("where is the credit-card application flow handled?", "what calls this service?") and get back the exact files plus an explanation, entirely offline. I used it to onboard onto a large commercial codebase faster than the rest of the team.
 
 ### Technical highlights
 
@@ -319,6 +319,39 @@ Repository root is incorrect or files moved.
 ### Query fails to start
 
 Summarizer or Chat prompt is empty.
+
+---
+
+# Project Structure
+
+```
+LocalScope/
+  app.py                      # Tkinter GUI entry point
+  config.py / settings_*.py   # settings + persisted config (~/.local-rag-llm/config.json)
+
+  gui/                        # GUI tabs: Query, Index, Settings, Prompts
+    query_tab.py
+    index_tab.py
+    settings_tab.py
+    prompts_tab.py
+
+  indexing/                   # repository indexing
+    indexer.py                # full index
+    incremental_indexer.py    # re-index only changed files
+    ast_chunker.py            # AST-aware code chunking
+
+  querying/
+    query_engine.py           # embed -> retrieve -> summarize -> LLM answer
+
+  ollama_manager/             # local model management + downloads
+    download_manager.py
+
+  cli/
+    rag_query.py              # command-line query interface
+
+  test_suite/                 # pytest benchmarks: embedding models, chunking,
+                              # overlap, top-k, answer quality, model comparison
+```
 
 ---
 
