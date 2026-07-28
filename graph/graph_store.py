@@ -12,7 +12,12 @@ class GraphLoadError(Exception):
 
 class GraphStore:
     def __init__(self) -> None:
-        self._g: nx.DiGraph = nx.DiGraph()
+        # MultiDiGraph, not DiGraph: two files are frequently related by more
+        # than one edge type (e.g. a file both IMPORTS and INVOKES the same
+        # class). A plain DiGraph allows only one edge per (source, target)
+        # pair, so a second add_edge() silently overwrites the first edge's
+        # edge_type instead of adding a parallel edge.
+        self._g: nx.MultiDiGraph = nx.MultiDiGraph()
 
     def add_edges(self, edges: list[Edge]) -> None:
         for e in edges:
@@ -24,8 +29,9 @@ class GraphStore:
             )
 
     def remove_file(self, path: str) -> None:
-        edges_to_remove = [(u, v) for u, v in self._g.edges() if u == path]
-        self._g.remove_edges_from(edges_to_remove)
+        """Remove path and every edge touching it, incoming or outgoing."""
+        if path in self._g:
+            self._g.remove_node(path)
 
     def shortest_path_length(self, source: str, target: str) -> float:
         try:
