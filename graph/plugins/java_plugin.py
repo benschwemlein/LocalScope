@@ -11,7 +11,15 @@ log = logging.getLogger(__name__)
 
 _JAVA_LANG = tree_sitter.Language(tsjava.language())
 
-_JAVA_SRC_ROOTS = ["src/main/java", "src/test/java", "src"]
+# Discovered source roots per repo_root — the walk is repo-wide, and
+# extract_edges runs once per file, so cache it rather than re-walking.
+_SRC_ROOT_CACHE: dict[str, list[str]] = {}
+
+_EXCLUDED_DIRS = {
+    ".git", ".idea", ".vscode",
+    "node_modules", "build", "dist", "out", "target", ".gradle",
+    ".venv", "venv", "__pycache__",
+}
 
 # Java standard library type names we should not create edges for
 _JAVA_BUILTINS = frozenset({
@@ -45,9 +53,39 @@ def _repo_root(file_path: str, source: str) -> str | None:
     return None
 
 
+def _discover_src_roots(repo_root: str) -> list[str]:
+    """
+    Find every Java source root in the repo, repo-relative, nearest-first.
+
+    Multi-module builds (Gradle/Maven subprojects) put their sources at
+    e.g. discovery-service/src/main/java, not just src/main/java at the top
+    level, so a fixed list of top-level candidates silently resolves nothing
+    for every module but the root one. Walk once and find them all.
+    """
+    cached = _SRC_ROOT_CACHE.get(repo_root)
+    if cached is not None:
+        return cached
+
+    roots: list[str] = []
+    for dirpath, dirnames, _files in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if d not in _EXCLUDED_DIRS]
+        norm = dirpath.replace(os.sep, "/")
+        if norm.endswith("/src/main/java") or norm.endswith("/src/test/java"):
+            roots.append(os.path.relpath(dirpath, repo_root))
+
+    # Shallowest first, so the root module wins ties over nested modules.
+    roots.sort(key=lambda p: (p.count(os.sep), p))
+    # Keep the legacy bare "src" fallback last for layouts without src/main/java.
+    if os.path.isdir(os.path.join(repo_root, "src")):
+        roots.append("src")
+
+    _SRC_ROOT_CACHE[repo_root] = roots
+    return roots
+
+
 def _resolve_java(qualified: str, repo_root: str) -> str | None:
     rel = qualified.replace(".", "/") + ".java"
-    for root in _JAVA_SRC_ROOTS:
+    for root in _discover_src_roots(repo_root):
         candidate = os.path.join(repo_root, root, rel)
         if os.path.exists(candidate):
             return os.path.join(root, rel)
