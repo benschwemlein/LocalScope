@@ -40,5 +40,3 @@ DEFAULT_REPO_ROOT = env("LCQ_REPO_ROOT", "")
 
 # Graph retrieval (hybrid vector + structural)
 GRAPH_ENABLED = env("LCQ_GRAPH_ENABLED", "false").lower() == "true"
-GRAPH_ALPHA = float(env("LCQ_GRAPH_ALPHA", "0.3"))
-GRAPH_BETA = float(env("LCQ_GRAPH_BETA", "0.6"))

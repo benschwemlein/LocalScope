@@ -272,149 +272,26 @@ def run_query(
         log("[query_engine] No relevant snippets found in the index.")
         raise RuntimeError("No relevant snippets found in the index.")
 
-    # Deduplicate by source file — build comprehensive map first, then slice top_k.
-    # The full map is used as the seed pool for graph fusion so graph-adjacent
-    # files that rank 11–30 in the vector pass can still get cosine scores.
-    ext_pool: dict[str, tuple] = {}  # source → (doc, meta, dist)
+    # Deduplicate by source file — keep only the best-scoring chunk per file.
+    # This prevents one large file from flooding all top-k slots.
+    seen_sources: set[str] = set()
+    deduped: list[tuple] = []
     for doc, meta, dist in zip(docs_list[0], metas_list[0], dist_list[0]):
         source = meta.get("source", "")
-        if source and source not in ext_pool:
-            ext_pool[source] = (doc, meta, dist)
+        if source and source not in seen_sources:
+            seen_sources.add(source)
+            deduped.append((doc, meta, dist))
 
-    # Top-k slice for the non-fusion path and as initial ordering
-    top_pool = list(ext_pool.values())[:top_k]
+    top_pool = deduped[:top_k]
     docs  = [r[0] for r in top_pool]
     metas = [r[1] for r in top_pool]
     dists = [r[2] for r in top_pool]
 
-    # Graph-hybrid fusion: expand and re-rank seeds via structural graph traversal
-    if config.GRAPH_ENABLED:
-        graph_path = os.path.join(index_dir, "graph.json")
-        if os.path.exists(graph_path):
-            try:
-                from graph.graph_store import GraphStore, GraphLoadError
-                from graph.fusion import SeedResult, expand_and_rerank
-
-                graph_store = GraphStore.load(graph_path)
-
-                # Augment ext_pool with 1-hop graph neighbors not yet retrieved.
-                # Files like concrete strategy classes referenced by the seed file
-                # may never appear in ChromaDB's top-N results, yet are structurally
-                # adjacent. Fetch them specifically so they get real cosine scores
-                # and the fusion re-ranker can surface them.
-                try:
-                    import networkx as _nx
-                    _g_undir = graph_store._g.to_undirected()
-                    _orig_pool: set[str] = set(ext_pool.keys())
-                    _missing: set[str] = set()
-                    for _fp in _orig_pool:
-                        if _fp in _g_undir:
-                            for _nb in _g_undir.neighbors(_fp):
-                                if _nb not in ext_pool:
-                                    _missing.add(_nb)
-                    if _missing:
-                        _adj = collection.query(
-                            query_embeddings=[q_embedding],
-                            n_results=min(len(_missing) * 3, 90),
-                            where={"source": {"$in": list(_missing)}},
-                            include=["documents", "metadatas", "distances"],
-                        )
-                        _before = len(ext_pool)
-                        for _doc, _meta, _dist in zip(
-                            _adj.get("documents", [[]])[0],
-                            _adj.get("metadatas", [[]])[0],
-                            _adj.get("distances", [[]])[0],
-                        ):
-                            _src = _meta.get("source", "")
-                            if _src and _src not in ext_pool:
-                                ext_pool[_src] = (_doc, _meta, _dist)
-                        log(
-                            f"[query_engine] Graph expansion: added "
-                            f"{len(ext_pool) - _before} adjacent files to pool"
-                        )
-
-                    # Graph-proximity boost: reduce the effective cosine distance
-                    # of expanded files (graph neighbors not in the vector top-N)
-                    # that are structurally adjacent via REFERENCES or INHERITS to
-                    # one of the top-3 vector seeds.
-                    #
-                    # Only EXPANDED files are boosted — orig_pool files keep their
-                    # natural vector distances so P@5 and MRR are not degraded for
-                    # queries where vector search already performs well.
-                    #
-                    # Only the top-3 seeds may propagate the boost. This prevents
-                    # tangentially-related seeds (e.g. OverdueFineContext appearing
-                    # in a loan-checkout query pool) from pulling in fine-domain
-                    # files and displacing genuinely relevant checkout files.
-                    #
-                    # IMPORTS edges are excluded: they link to loosely-related
-                    # utility/entity classes across package boundaries.
-                    _beta = config.GRAPH_BETA
-                    _BOOST_EDGE_TYPES = frozenset({"REFERENCES", "INHERITS"})
-                    _dg = graph_store._g  # directed graph for edge-type lookup
-                    _orig_dists = sorted(ext_pool[fp][2] for fp in _orig_pool)
-                    _N_SEEDS = 3
-                    _idx = min(_N_SEEDS - 1, len(_orig_dists) - 1)
-                    _quality_threshold = _orig_dists[_idx] if _orig_dists else 1.0
-                    for _af in list(ext_pool.keys()):
-                        if _af in _orig_pool:
-                            continue  # only boost newly-expanded files
-                        if _af not in _g_undir:
-                            continue
-                        _best_seed_dist: float | None = None
-                        for _nb in _g_undir.neighbors(_af):
-                            if _nb == _af:
-                                continue
-                            if _nb not in _orig_pool:
-                                continue  # only boost from original vector seeds
-                            if ext_pool[_nb][2] > _quality_threshold:
-                                continue  # only top-3 seeds may propagate
-                            _ed = _dg.get_edge_data(_nb, _af) or _dg.get_edge_data(_af, _nb)
-                            if _ed and _ed.get("edge_type") in _BOOST_EDGE_TYPES:
-                                _sd = ext_pool[_nb][2]
-                                if _best_seed_dist is None or _sd < _best_seed_dist:
-                                    _best_seed_dist = _sd
-                        if _best_seed_dist is None:
-                            continue
-                        _raw_dist = ext_pool[_af][2]
-                        _boosted_dist = min(_raw_dist, _best_seed_dist * _beta)
-                        if _boosted_dist < _raw_dist:
-                            _doc_af, _meta_af, _ = ext_pool[_af]
-                            ext_pool[_af] = (_doc_af, _meta_af, _boosted_dist)
-                except Exception as _adj_exc:
-                    log(f"[query_engine] Adjacent-file expansion failed (non-fatal): {_adj_exc}")
-
-                # Use the full extended + adjacent pool as seeds
-                seeds = [
-                    SeedResult(
-                        file_path=fp,
-                        cos_distance=d,
-                        content_snippet=doc[:500],
-                    )
-                    for fp, (doc, _meta, d) in ext_pool.items()
-                ]
-                fused = expand_and_rerank(
-                    seeds,
-                    query_for_embedding,
-                    graph_store,
-                    alpha=config.GRAPH_ALPHA,
-                    beta=config.GRAPH_BETA,
-                )
-                if fused:
-                    fused_paths = [r.file_path for r in fused[:top_k]]
-                    # Rebuild docs/metas/dists from the comprehensive pool
-                    new_docs, new_metas, new_dists = [], [], []
-                    for fp in fused_paths:
-                        if fp in ext_pool:
-                            doc, meta, d = ext_pool[fp]
-                            new_docs.append(doc)
-                            new_metas.append(meta)
-                            new_dists.append(d)
-                    if new_docs:
-                        docs, metas, dists = new_docs, new_metas, new_dists
-                        log(f"[query_engine] Graph fusion reranked {len(docs)} results")
-            except Exception as exc:
-                log(f"[query_engine] Graph fusion failed, falling back to vector-only: {exc}")
+    # TODO(graph-routing): symbol-anchored queries should route to the precanned
+    # graph queries (callers-of, callees-of, implementations-of, references-to,
+    # path-between, contents-of) instead of vector search; conceptual queries
+    # should expand these vector hits one hop along graph edges. See
+    # architecture-dossier-2026-07.md in hybrid_graph_llm for the design.
 
     scores = _compute_relative_scores(dists)
 

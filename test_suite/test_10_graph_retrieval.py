@@ -70,8 +70,6 @@ def graph_query_results(graph_app):
 
     original = config.GRAPH_ENABLED
     config.GRAPH_ENABLED = True
-    config.GRAPH_ALPHA = 0.3
-    config.GRAPH_BETA = 0.6
 
     try:
         results = {}
@@ -306,44 +304,3 @@ def test_graph_retrieval_report(graph_query_results, graph_app):
     print(f"  {'MEAN':<28} {sum(p5s)/len(p5s):>6.2f} {sum(r10s)/len(r10s):>6.2f} {sum(mrrs)/len(mrrs):>6.2f}")
     print("\n  Targets: P@5>=0.50  R@10>=0.70  MRR>=0.88")
     print("=" * 50)
-
-
-# ---------------------------------------------------------------------------
-# α/β sweep — reports best weights for this corpus (always passes)
-# ---------------------------------------------------------------------------
-
-_ALPHA_VALS = [0.1, 0.3, 0.5, 0.7]
-_BETA_VALS  = [0.4, 0.6, 0.8]
-_SWEEP_PARAMS = [(a, b) for a in _ALPHA_VALS for b in _BETA_VALS]
-
-
-@pytest.mark.parametrize("alpha,beta", _SWEEP_PARAMS, ids=[f"a{a}_b{b}" for a, b in _SWEEP_PARAMS])
-def test_alphabeta_sweep(alpha, beta, graph_app):
-    """Parametrized α/β sweep — reports mean R@10 for each combination. Always passes."""
-    import config
-    from querying.query_engine import run_query
-
-    original_enabled = config.GRAPH_ENABLED
-    original_alpha = config.GRAPH_ALPHA
-    original_beta = config.GRAPH_BETA
-    config.GRAPH_ENABLED = True
-    config.GRAPH_ALPHA = alpha
-    config.GRAPH_BETA = beta
-
-    try:
-        r10s = []
-        for case in GROUND_TRUTH:
-            result = run_query(
-                bug_text=case.question,
-                index_dir=graph_app["index_dir"],
-                top_k=10,
-                log=lambda _: None,
-            )
-            sources = [m.get("source", "") for m in result.get("metas", [])]
-            r10s.append(recall_at_k(sources, set(case.expected_files), 10))
-        mean_r10 = sum(r10s) / len(r10s)
-        print(f"\n  α={alpha} β={beta}  mean R@10={mean_r10:.3f}")
-    finally:
-        config.GRAPH_ENABLED = original_enabled
-        config.GRAPH_ALPHA = original_alpha
-        config.GRAPH_BETA = original_beta
