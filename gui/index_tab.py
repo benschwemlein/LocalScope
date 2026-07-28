@@ -35,6 +35,7 @@ COMMON_FILETYPE_GROUPS = {
         ".gradle",
         ".xml",
         ".properties",
+        ".jsp", ".jspf", ".tag", ".tagx",
     ],
     "JavaScript / Web": [
         ".js", ".jsx",

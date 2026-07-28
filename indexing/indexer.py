@@ -32,6 +32,7 @@ DEFAULT_INDEX_EXTS: set[str] = {
     ".gradle",
     ".xml",
     ".properties",
+    ".jsp", ".jspf", ".tag", ".tagx",
     
     # JavaScript / Web
     ".js", ".jsx",

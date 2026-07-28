@@ -11,10 +11,11 @@ from graph.plugin_registry import default_registry
 import graph.plugins.java_plugin       # noqa: F401
 import graph.plugins.typescript_plugin # noqa: F401
 import graph.plugins.html_plugin       # noqa: F401
+import graph.plugins.jsp_plugin        # noqa: F401
 
 log = logging.getLogger(__name__)
 
-_GRAPH_EXTS = {".java", ".ts", ".tsx", ".html"}
+_GRAPH_EXTS = {".java", ".ts", ".tsx", ".html", ".jsp", ".jspf", ".tag", ".tagx"}
 _EXCLUDED_DIRS = {
     ".git", ".idea", ".vscode",
     "node_modules", "build", "dist", "out", "target", ".gradle",
