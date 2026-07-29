@@ -112,6 +112,22 @@ def build_incremental(
     for rel in to_delete:
         saved_hashes.pop(rel, None)
 
+    # Cross-language REST pass. Unlike the per-file plugins this is inherently
+    # whole-repo — an edge depends on a route declared in one file matching a
+    # call in another — so it can't be updated incrementally from the changed
+    # set alone. Editing one controller can create or destroy edges touching
+    # files that didn't change. It's a regex scan, cheap enough to redo every
+    # build, so the stale edges are dropped and the pass rerun wholesale.
+    try:
+        from graph.rest_edges import extract_rest_edges
+
+        store.remove_edges_of_type(EdgeType.CALLS_ENDPOINT)
+        rest_edges, _diag = extract_rest_edges(repo_root, log_fn=log_fn)
+        if rest_edges:
+            store.add_edges(rest_edges)
+    except Exception as e:
+        log_fn(f"[graph_builder] REST edge pass failed (non-fatal): {e}")
+
     # Persist
     store.save(graph_path)
     with open(hashes_path, "w") as fh:

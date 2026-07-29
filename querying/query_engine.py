@@ -397,14 +397,16 @@ def run_query(
             if os.path.exists(graph_path):
                 try:
                     from graph.graph_store import GraphStore
-                    from graph.queries import one_hop_neighbors
+                    from graph.queries import expansion_neighbors
 
                     graph_store = GraphStore.load(graph_path)
                     neighbor_candidates: set[str] = set()
                     for meta in metas[:3]:
                         seed_source = meta.get("source", "")
                         if seed_source:
-                            neighbor_candidates.update(one_hop_neighbors(graph_store, seed_source))
+                            neighbor_candidates.update(
+                                expansion_neighbors(graph_store, seed_source)
+                            )
                     neighbor_candidates -= seen_sources
 
                     if neighbor_candidates:

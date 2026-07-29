@@ -33,6 +33,19 @@ class GraphStore:
         if path in self._g:
             self._g.remove_node(path)
 
+    def remove_edges_of_type(self, edge_type: EdgeType) -> int:
+        """Drop every edge of one type, leaving nodes and other edges intact.
+
+        Needed by whole-repo passes that must be recomputed rather than
+        updated incrementally: clear what the last pass produced, then re-add.
+        """
+        doomed = [
+            (u, v, k) for u, v, k, data in self._g.edges(keys=True, data=True)
+            if data.get("edge_type") == edge_type.value
+        ]
+        self._g.remove_edges_from(doomed)
+        return len(doomed)
+
     def shortest_path_length(self, source: str, target: str) -> float:
         try:
             lengths = nx.single_source_dijkstra_path_length(self._g, source, cutoff=None, weight=None)

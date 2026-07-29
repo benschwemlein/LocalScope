@@ -105,3 +105,58 @@ def one_hop_neighbors(store: GraphStore, file_path: str) -> list[str]:
         return []
     g_undir = g.to_undirected()
     return list(g_undir.neighbors(file_path))
+
+
+def expansion_neighbors(
+    store: GraphStore, file_path: str, max_depth: int = 3
+) -> list[str]:
+    """
+    Neighbors worth pulling into retrieval context: everything one hop away,
+    plus anything up to max_depth away whose path crosses a CALLS_ENDPOINT edge.
+
+    Depth is gated on edge type rather than applied uniformly because the two
+    kinds of edge have very different precision. IMPORTS and REFERENCES are
+    numerous and weak — a Java file imports dozens of things, most irrelevant
+    to any given question — so widening past one hop mostly adds noise.
+    CALLS_ENDPOINT edges are few and each is a verified route match, and they
+    are the only link between the frontend and backend halves of a full-stack
+    repo. Without deeper traversal across them the client and server sit in
+    disconnected components and no expansion reaches from one to the other:
+    evidence typically sits at the ends of a component -> api-service ->
+    controller -> domain-service chain, while the REST edge joins the middle.
+    """
+    g = store._g
+    if file_path not in g:
+        return []
+
+    g_undir = g.to_undirected()
+    rest = EdgeType.CALLS_ENDPOINT.value
+
+    def crosses_rest(a: str, b: str) -> bool:
+        data = g_undir.get_edge_data(a, b) or {}
+        # MultiGraph edge data is keyed by parallel-edge index
+        return any(d.get("edge_type") == rest for d in data.values())
+
+    found: set[str] = set()
+    seen: set[tuple[str, bool]] = {(file_path, False)}
+    frontier = [(file_path, 0, False)]
+
+    while frontier:
+        node, depth, used_rest = frontier.pop(0)
+        if depth >= max_depth:
+            continue
+        for nb in g_undir.neighbors(node):
+            nb_used = used_rest or crosses_rest(node, nb)
+            nb_depth = depth + 1
+            # Beyond one hop, only paths that have crossed the cross-language
+            # bridge earn the extra reach.
+            if nb_depth > 1 and not nb_used:
+                continue
+            if nb != file_path:
+                found.add(nb)
+            state = (nb, nb_used)
+            if state not in seen:
+                seen.add(state)
+                frontier.append((nb, nb_depth, nb_used))
+
+    return sorted(found)

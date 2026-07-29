@@ -116,3 +116,59 @@ def test_one_hop_neighbors_is_undirected_and_all_edge_types():
         "LoanController.java",        # incoming INVOKES + IMPORTS
         "FineCalculationStrategy.java",  # outgoing REFERENCES
     }
+
+
+# ---------------------------------------------------------------------------
+# Edge-type-aware expansion depth
+# ---------------------------------------------------------------------------
+
+def build_fullstack_store() -> GraphStore:
+    """component -> api-service -(REST)-> controller -> domain-service.
+
+    Evidence for a cross-language question typically sits at the two ends,
+    while the REST edge joins the middle, so reaching one end from the other
+    needs three hops through the bridge.
+    """
+    store = GraphStore()
+    store.add_edges([
+        Edge("holds-list.ts", "holds-api.service.ts", EdgeType.IMPORTS),
+        Edge("holds-api.service.ts", "HoldController.java", EdgeType.CALLS_ENDPOINT),
+        Edge("HoldController.java", "HoldService.java", EdgeType.REFERENCES),
+        # a noisy neighbour two hops away on generic edges only
+        Edge("holds-list.ts", "SharedUtil.ts", EdgeType.IMPORTS),
+        Edge("SharedUtil.ts", "DeepUnrelated.ts", EdgeType.IMPORTS),
+    ])
+    return store
+
+
+def test_expansion_crosses_rest_edge_beyond_one_hop():
+    from graph.queries import expansion_neighbors
+    store = build_fullstack_store()
+    out = set(expansion_neighbors(store, "holds-list.ts"))
+    # one hop
+    assert "holds-api.service.ts" in out
+    # two and three hops, reached only by crossing CALLS_ENDPOINT
+    assert "HoldController.java" in out
+    assert "HoldService.java" in out
+
+
+def test_expansion_does_not_widen_on_generic_edges():
+    """Two hops along IMPORTS alone must stay excluded, or every expansion
+    balloons with weakly-related files."""
+    from graph.queries import expansion_neighbors
+    store = build_fullstack_store()
+    out = set(expansion_neighbors(store, "holds-list.ts"))
+    assert "SharedUtil.ts" in out          # one hop, fine
+    assert "DeepUnrelated.ts" not in out   # two hops, no REST edge crossed
+
+
+def test_expansion_matches_one_hop_when_no_rest_edges():
+    from graph.queries import expansion_neighbors
+    store = build_sample_store()  # no CALLS_ENDPOINT edges at all
+    assert set(expansion_neighbors(store, "OverdueFineContext.java")) == \
+           set(one_hop_neighbors(store, "OverdueFineContext.java"))
+
+
+def test_expansion_unknown_file_returns_empty():
+    from graph.queries import expansion_neighbors
+    assert expansion_neighbors(build_fullstack_store(), "NoSuchFile.ts") == []

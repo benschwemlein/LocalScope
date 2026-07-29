@@ -8,6 +8,10 @@ class EdgeType(Enum):
     INHERITS = "INHERITS"
     REFERENCES = "REFERENCES"
     CONTAINS = "CONTAINS"
+    # Client HTTP call -> server route handler. The only edge type that
+    # crosses a language boundary, and the only one derived from matching
+    # string routes rather than resolved symbols.
+    CALLS_ENDPOINT = "CALLS_ENDPOINT"
 
 
 @dataclass
