@@ -40,6 +40,12 @@ DEFAULT_REPO_ROOT = env("LCQ_REPO_ROOT", "")
 
 # Graph retrieval (hybrid vector + structural)
 GRAPH_ENABLED = env("LCQ_GRAPH_ENABLED", "false").lower() == "true"
+# How many top vector hits seed the graph expansion, and how far a path may
+# run when it crosses a cross-language CALLS_ENDPOINT edge. Exposed because
+# the right values are repo-shaped: a repo with no frontend gets nothing from
+# depth, and a densely-imported one gets noise from extra seeds.
+GRAPH_EXPANSION_SEEDS = int(env("LCQ_GRAPH_EXPANSION_SEEDS", "3"))
+GRAPH_EXPANSION_DEPTH = int(env("LCQ_GRAPH_EXPANSION_DEPTH", "3"))
 
 # Lexical retrieval (identifier full-text index)
 LEXICAL_ENABLED = env("LCQ_LEXICAL_ENABLED", "false").lower() == "true"

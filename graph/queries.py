@@ -107,9 +107,14 @@ def one_hop_neighbors(store: GraphStore, file_path: str) -> list[str]:
     return list(g_undir.neighbors(file_path))
 
 
-def expansion_neighbors(
+def expansion_neighbors(store: GraphStore, file_path: str, max_depth: int = 3) -> list[str]:
+    """Names only; see expansion_neighbors_with_depth for the ranked form."""
+    return sorted(expansion_neighbors_with_depth(store, file_path, max_depth))
+
+
+def expansion_neighbors_with_depth(
     store: GraphStore, file_path: str, max_depth: int = 3
-) -> list[str]:
+) -> dict[str, int]:
     """
     Neighbors worth pulling into retrieval context: everything one hop away,
     plus anything up to max_depth away whose path crosses a CALLS_ENDPOINT edge.
@@ -127,7 +132,7 @@ def expansion_neighbors(
     """
     g = store._g
     if file_path not in g:
-        return []
+        return {}
 
     g_undir = g.to_undirected()
     rest = EdgeType.CALLS_ENDPOINT.value
@@ -137,7 +142,7 @@ def expansion_neighbors(
         # MultiGraph edge data is keyed by parallel-edge index
         return any(d.get("edge_type") == rest for d in data.values())
 
-    found: set[str] = set()
+    found: dict[str, int] = {}
     seen: set[tuple[str, bool]] = {(file_path, False)}
     frontier = [(file_path, 0, False)]
 
@@ -153,10 +158,11 @@ def expansion_neighbors(
             if nb_depth > 1 and not nb_used:
                 continue
             if nb != file_path:
-                found.add(nb)
+                # BFS order means the first arrival is the shortest path
+                found.setdefault(nb, nb_depth)
             state = (nb, nb_used)
             if state not in seen:
                 seen.add(state)
                 frontier.append((nb, nb_depth, nb_used))
 
-    return sorted(found)
+    return found

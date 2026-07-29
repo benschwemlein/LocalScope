@@ -155,6 +155,33 @@ def _chat_with_context(
     return "".join(full_text)
 
 
+def _reciprocal_rank_fusion(
+    rankings: list[list[str]], limit: int, k: int = 60
+) -> list[str]:
+    """
+    Combine several ranked lists into one, scoring each item by the sum of
+    1/(k + rank) across the lists it appears in.
+
+    Ranks are used rather than raw scores because the retrievers' scores are
+    not comparable: a cosine distance, a BM25 score, and a hop count share no
+    scale, and normalizing them introduces weights that would need tuning per
+    repository. RRF needs no tuning, and rewards agreement — a file all three
+    retrievers rank moderately well beats one that a single retriever loves.
+    k=60 is the value from the original TREC work; it damps the influence of
+    the very top ranks so one retriever can't dominate outright.
+    """
+    scores: dict[str, float] = {}
+    for ranking in rankings:
+        for rank, source in enumerate(ranking):
+            scores[source] = scores.get(source, 0.0) + 1.0 / (k + rank + 1)
+    # Ties broken by best position in any single ranking, for determinism
+    best_rank = {}
+    for ranking in rankings:
+        for rank, source in enumerate(ranking):
+            best_rank[source] = min(best_rank.get(source, 10**9), rank)
+    return sorted(scores, key=lambda s: (-scores[s], best_rank[s], s))[:limit]
+
+
 def _compute_relative_scores(distances: list[float]) -> list[float]:
     if not distances:
         return []
@@ -340,94 +367,90 @@ def run_query(
 
         # Deduplicate by source file — keep only the best-scoring chunk per file.
         # This prevents one large file from flooding all top-k slots.
-        seen_sources: set[str] = set()
-        deduped: list[tuple] = []
+        pool: dict[str, tuple] = {}      # source -> (doc, meta, dist)
+        vector_ranked: list[str] = []    # sources in vector-similarity order
         for doc, meta, dist in zip(docs_list[0], metas_list[0], dist_list[0]):
             source = meta.get("source", "")
-            if source and source not in seen_sources:
-                seen_sources.add(source)
-                deduped.append((doc, meta, dist))
+            if source and source not in pool:
+                pool[source] = (doc, meta, dist)
+                vector_ranked.append(source)
 
-        top_pool = deduped[:top_k]
-        docs  = [r[0] for r in top_pool]
-        metas = [r[1] for r in top_pool]
-        dists = [r[2] for r in top_pool]
+        # Every retriever produces a RANKED LIST of sources; they are then fused
+        # and truncated to top_k. Critically, all sources compete for the same
+        # top_k slots. An earlier version appended lexical and graph hits on top
+        # of the vector results (up to top_k * 2), which meant enabling them
+        # silently doubled the context — so they "improved" retrieval simply by
+        # returning more files, which raising top_k does more cheaply. A
+        # graph-surfaced file now has to outrank a vector hit to earn its place.
+        rankings: list[list[str]] = [vector_ranked]
 
-        # Lexical merge: append identifier-matched files the embedder missed.
-        # A symbol-ish term mentioned in passing within an otherwise
-        # conceptual question ("why is InvoiceProcessor slow?") often scores
-        # poorly on cosine similarity alone — the FTS index catches it
-        # directly. Appended after the vector pool, not score-blended, same
-        # rationale as the graph expansion below: no published system fuses
-        # these into one ranking.
         if config.LEXICAL_ENABLED:
             try:
                 from indexing.lexical_index import search_lexical
 
-                lexical_hits = search_lexical(index_dir, bug, limit=top_k)
-                new_sources = [src for src, _score in lexical_hits if src not in seen_sources]
-                if new_sources:
-                    fetched = collection.get(
-                        where={"source": {"$in": new_sources}},
-                        include=["documents", "metadatas"],
-                    )
-                    added = 0
-                    for doc, meta in zip(fetched.get("documents", []), fetched.get("metadatas", [])):
-                        source = meta.get("source", "")
-                        if source and source not in seen_sources and len(docs) < top_k * 2:
-                            seen_sources.add(source)
-                            docs.append(doc)
-                            metas.append(meta)
-                            dists.append(max(dists) if dists else 1.0)
-                            added += 1
-                    if added:
-                        log(f"[query_engine] Lexical search added {added} identifier-matched file(s)")
+                lexical_ranked = [src for src, _score in search_lexical(index_dir, bug, limit=top_k * 2)]
+                if lexical_ranked:
+                    rankings.append(lexical_ranked)
+                    log(f"[query_engine] Lexical retriever returned {len(lexical_ranked)} file(s)")
             except Exception as e:
                 log(f"[query_engine] Lexical search failed (non-fatal): {e}")
 
-        # Graph expansion: pull in files structurally adjacent (any edge type,
-        # either direction) to the top-3 vector hits, so files the embedding
-        # missed but that are directly connected still make it into context.
-        # Appended after the ranked vector hits, not score-blended with them —
-        # no published system fuses graph and vector scores into one ranking;
-        # sequential composition (vector picks seeds, graph expands them) is
-        # what the peer-reviewed literature converges on.
         if config.GRAPH_ENABLED:
             graph_path = os.path.join(index_dir, "graph.json")
             if os.path.exists(graph_path):
                 try:
                     from graph.graph_store import GraphStore
-                    from graph.queries import expansion_neighbors
+                    from graph.queries import expansion_neighbors_with_depth
 
                     graph_store = GraphStore.load(graph_path)
-                    neighbor_candidates: set[str] = set()
-                    for meta in metas[:3]:
-                        seed_source = meta.get("source", "")
-                        if seed_source:
-                            neighbor_candidates.update(
-                                expansion_neighbors(graph_store, seed_source)
-                            )
-                    neighbor_candidates -= seen_sources
-
-                    if neighbor_candidates:
-                        fetched = collection.get(
-                            where={"source": {"$in": list(neighbor_candidates)}},
-                            include=["documents", "metadatas"],
-                        )
-                        worst_dist = max(dists) if dists else 1.0
-                        added = 0
-                        for doc, meta in zip(fetched.get("documents", []), fetched.get("metadatas", [])):
-                            source = meta.get("source", "")
-                            if source and source not in seen_sources and len(docs) < top_k * 2:
-                                seen_sources.add(source)
-                                docs.append(doc)
-                                metas.append(meta)
-                                dists.append(worst_dist)
-                                added += 1
-                        if added:
-                            log(f"[query_engine] Graph expansion added {added} structurally adjacent file(s)")
+                    # Rank expanded files by (seed rank, hop distance): a file
+                    # one hop from the best vector hit is a stronger candidate
+                    # than one three hops from the third-best.
+                    scored: dict[str, tuple[int, int]] = {}
+                    for seed_rank, source in enumerate(vector_ranked[:config.GRAPH_EXPANSION_SEEDS]):
+                        for nb, depth in expansion_neighbors_with_depth(
+                            graph_store, source, max_depth=config.GRAPH_EXPANSION_DEPTH
+                        ).items():
+                            cand = (seed_rank, depth)
+                            if nb not in scored or cand < scored[nb]:
+                                scored[nb] = cand
+                    graph_ranked = sorted(scored, key=lambda s: scored[s])
+                    if graph_ranked:
+                        rankings.append(graph_ranked)
+                        log(f"[query_engine] Graph expansion returned {len(graph_ranked)} file(s)")
                 except Exception as e:
                     log(f"[query_engine] Graph expansion failed (non-fatal): {e}")
+
+        if len(rankings) > 1:
+            final_sources = _reciprocal_rank_fusion(rankings, limit=top_k)
+        else:
+            final_sources = vector_ranked[:top_k]
+
+        # Candidates surfaced only by lexical or graph aren't in the vector
+        # result set, so their chunks still need fetching.
+        missing = [s for s in final_sources if s not in pool]
+        if missing:
+            try:
+                fetched = collection.get(
+                    where={"source": {"$in": missing}},
+                    include=["documents", "metadatas"],
+                )
+                for doc, meta in zip(fetched.get("documents", []), fetched.get("metadatas", [])):
+                    source = meta.get("source", "")
+                    if source and source not in pool:
+                        pool[source] = (doc, meta, None)
+            except Exception as e:
+                log(f"[query_engine] Could not fetch fused candidates (non-fatal): {e}")
+
+        final_sources = [s for s in final_sources if s in pool]
+        docs  = [pool[s][0] for s in final_sources]
+        metas = [pool[s][1] for s in final_sources]
+        # After fusion a cosine distance no longer describes the ordering, so
+        # rank position stands in for it and the displayed score stays monotonic.
+        dists = [
+            pool[s][2] if len(rankings) == 1 and pool[s][2] is not None else i / max(len(final_sources), 1)
+            for i, s in enumerate(final_sources)
+        ]
 
     scores = _compute_relative_scores(dists)
 
