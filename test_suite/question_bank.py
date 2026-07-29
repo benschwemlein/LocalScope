@@ -103,6 +103,40 @@ def load_questions() -> list[Question]:
     return questions
 
 
+def load_judge_fields() -> dict[str, dict[str, str]]:
+    """
+    Load the answer-key fields, keyed by question id: the reference answer and
+    the scoring guidance naming the plausible-but-wrong response.
+
+    Kept out of Question deliberately. These exist to be handed to a judge
+    model at scoring time and nowhere else — not printed, not logged, not
+    summarized. Loading them separately keeps the ordinary retrieval path from
+    ever touching them by accident.
+    """
+    bank = question_bank_dir()
+    if bank is None:
+        return {}
+    try:
+        import yaml
+    except ImportError:
+        return {}
+
+    out: dict[str, dict[str, str]] = {}
+    for path in sorted(bank.glob("q-*.yaml")):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                entries = yaml.safe_load(fh) or []
+        except Exception:
+            continue
+        for e in entries:
+            if isinstance(e, dict) and "id" in e:
+                out[e["id"]] = {
+                    "expected": (e.get("expected") or "").strip(),
+                    "scoring_notes": (e.get("scoring_notes") or "").strip(),
+                }
+    return out
+
+
 def resolvable_at(questions: list[Question], corpus: Path) -> list[Question]:
     """
     Keep only questions whose every evidence file exists in this checkout.
