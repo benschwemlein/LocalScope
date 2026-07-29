@@ -188,9 +188,14 @@ def run_query(
     cancel_event: threading.Event | None = None,
     token_callback: Callable[[str], None] | None = None,
     step_callback: Callable[[int, str], None] | None = None,
+    retrieval_only: bool = False,
 ):
     """
     Run a query against the ChromaDB index using Ollama embeddings and chat.
+
+    retrieval_only: skip answer generation and return the retrieved context
+    alone. Answer generation dominates latency, so evaluations measuring
+    which files reach the context should set this.
     """
     index_dir = index_dir or config.DEFAULT_INDEX_DIR
     bug = bug_text.strip()
@@ -446,6 +451,17 @@ def run_query(
 
     if _cancelled():
         raise RuntimeError("Cancelled.")
+
+    if retrieval_only:
+        # Retrieval evaluation and "just show me the files" callers don't need
+        # a generated answer, and generation dominates query latency.
+        return {
+            "answer": "",
+            "docs": docs,
+            "metas": metas,
+            "distances": dists,
+            "scores": scores,
+        }
 
     _step(3, "Generating answer...")
     log("")
