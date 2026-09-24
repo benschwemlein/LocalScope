@@ -74,10 +74,8 @@ def index_repo_incremental(
         settings=Settings(anonymized_telemetry=False),
     )
     
-    embedding_function = embedding_functions.OllamaEmbeddingFunction(
-        url=config.OLLAMA_URL,
-        model_name=config.EMBED_MODEL
-    )
+    from indexing.embedding import make_embedding_function
+    embedding_function = make_embedding_function()
     
     # Full reindex: delete and recreate
     if force_full_reindex:

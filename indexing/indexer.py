@@ -283,10 +283,8 @@ def index_repo(
     # ============================================================================
     # FIX: Create Ollama embedding function instead of using default
     # ============================================================================
-    embedding_function = embedding_functions.OllamaEmbeddingFunction(
-        url=config.OLLAMA_URL,
-        model_name=config.EMBED_MODEL
-    )
+    from indexing.embedding import make_embedding_function
+    embedding_function = make_embedding_function()
 
     collection = client.get_or_create_collection(
         name=collection_name,

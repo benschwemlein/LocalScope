@@ -16,6 +16,9 @@ APP_TITLE = env("LCQ_APP_TITLE", "Local Code Query")
 # Ollama configuration (these will be edited by the Settings tab)
 OLLAMA_URL = env("LCQ_OLLAMA_URL", "http://localhost:11434")
 EMBED_MODEL = env("LCQ_EMBED_MODEL", "mxbai-embed-large")
+# Prepended to every chunk before embedding, for models trained with a
+# document-side instruction. Changing it requires a full reindex.
+EMBED_DOC_PREFIX = env("LCQ_EMBED_DOC_PREFIX", "")
 CHAT_MODEL = env("LCQ_CHAT_MODEL", "qwen2.5:7b")
 
 # Index storage
