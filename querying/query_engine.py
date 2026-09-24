@@ -1,6 +1,7 @@
 import os
 import json
 import threading
+import time
 from typing import Callable, Any
 
 import requests
@@ -176,6 +177,70 @@ def _compute_relative_scores(distances: list[float]) -> list[float]:
     return scores
 
 
+def retrieve_chunks(
+    collection,
+    question: str,
+    q_embedding: list[float],
+    top_k: int,
+    log: LogFn = print,
+) -> tuple[list[str], list[dict], list[float]]:
+    """
+    The retrieval stage of run_query: at most top_k chunks, one per file.
+
+    Returns (docs, metas, distances), best first. Distances are always
+    lower-is-better. Without reranking they are the embedding distances; with
+    reranking they are negated cross-encoder scores, so callers ranking or
+    normalising by distance behave the same either way.
+    """
+    rerank = config.RERANK_ENABLED
+    # Fetch more candidates than top_k so deduplication still yields top_k
+    # files; reranking fetches wider still so it has something to reorder.
+    pool = max(top_k * 3, config.RERANK_POOL) if rerank else top_k * 3
+
+    res = collection.query(
+        query_embeddings=[q_embedding],
+        n_results=pool,
+        include=["documents", "metadatas", "distances"],
+    )
+    docs = (res.get("documents") or [[]])[0]
+    metas = (res.get("metadatas") or [[]])[0]
+    dists = (res.get("distances") or [[]])[0]
+
+    if not docs:
+        log("[query_engine] No relevant snippets found in the index.")
+        raise RuntimeError("No relevant snippets found in the index.")
+
+    if rerank:
+        from querying.reranker import score_pairs
+
+        start = time.monotonic()
+        scores = score_pairs(question, docs)
+        order = sorted(range(len(docs)), key=lambda i: scores[i], reverse=True)
+        docs = [docs[i] for i in order]
+        metas = [metas[i] for i in order]
+        dists = [-scores[i] for i in order]
+        log(f"[query_engine] Reranked {len(scores)} chunks with "
+            f"{config.RERANK_MODEL} in {time.monotonic() - start:.2f}s")
+
+    # Deduplicate by source file — keep only the best-scoring chunk per file.
+    # This prevents one large file from flooding all top-k slots.
+    seen_sources: set[str] = set()
+    deduped: list[tuple] = []
+    for doc, meta, dist in zip(docs, metas, dists):
+        source = meta.get("source", "")
+        if source not in seen_sources:
+            seen_sources.add(source)
+            deduped.append((doc, meta, dist))
+        if len(deduped) == top_k:
+            break
+
+    return (
+        [r[0] for r in deduped],
+        [r[1] for r in deduped],
+        [r[2] for r in deduped],
+    )
+
+
 def run_query(
     bug_text: str,
     index_dir: str | None = None,
@@ -257,36 +322,9 @@ def run_query(
     _step(2, "Searching index...")
     log(f"[query_engine] Querying index for top {top_k} snippets...")
 
-    # Fetch more candidates so deduplication still yields top_k results
-    res = collection.query(
-        query_embeddings=[q_embedding],
-        n_results=top_k * 3,
-        include=["documents", "metadatas", "distances"],
+    docs, metas, dists = retrieve_chunks(
+        collection, query_for_embedding, q_embedding, top_k, log
     )
-
-    docs_list = res.get("documents", [[]])
-    metas_list = res.get("metadatas", [[]])
-    dist_list = res.get("distances", [[]])
-
-    if not docs_list or not docs_list[0]:
-        log("[query_engine] No relevant snippets found in the index.")
-        raise RuntimeError("No relevant snippets found in the index.")
-
-    # Deduplicate by source file — keep only the best-scoring chunk per file.
-    # This prevents one large file from flooding all top-k slots.
-    seen_sources: set[str] = set()
-    deduped: list[tuple] = []
-    for doc, meta, dist in zip(docs_list[0], metas_list[0], dist_list[0]):
-        source = meta.get("source", "")
-        if source not in seen_sources:
-            seen_sources.add(source)
-            deduped.append((doc, meta, dist))
-        if len(deduped) == top_k:
-            break
-
-    docs  = [r[0] for r in deduped]
-    metas = [r[1] for r in deduped]
-    dists = [r[2] for r in deduped]
 
     scores = _compute_relative_scores(dists)
 

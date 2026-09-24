@@ -38,5 +38,14 @@ DEFAULT_MAX_DIRECT_EMBED_CHARS = int(
     env("LCQ_MAX_DIRECT_EMBED_CHARS", "4000")
 )
 
+# Cross-encoder reranking (off by default). When on, retrieval fetches a
+# wider pool of chunks, a cross-encoder scores each (question, chunk) pair,
+# and the best-scoring chunk per file decides the final order. The number of
+# files returned is unchanged.
+RERANK_ENABLED = env("LCQ_RERANK_ENABLED", "0") == "1"
+RERANK_MODEL = env("LCQ_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANK_POOL = int(env("LCQ_RERANK_POOL", "50"))
+RERANK_DEVICE = env("LCQ_RERANK_DEVICE", "")  # "" = auto (mps, cuda or cpu)
+
 # Optional default repo
 DEFAULT_REPO_ROOT = env("LCQ_REPO_ROOT", "")

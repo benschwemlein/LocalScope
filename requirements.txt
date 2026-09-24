@@ -1,2 +1,3 @@
 chromadb
 requests
+sentence-transformers  # optional: only needed with LCQ_RERANK_ENABLED=1
