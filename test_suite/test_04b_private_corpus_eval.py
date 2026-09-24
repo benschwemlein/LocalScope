@@ -79,14 +79,16 @@ def retrieve_sources(index_dir: str, questions: list[dict],
                      query_prefix: str = "", top_k: int = TOP_K) -> dict:
     """question id -> ordered list of retrieved source files (up to top_k).
 
-    Mirrors run_query's retrieval stage: embed, fetch 3x wide, keep the best
-    chunk per source file. query_prefix is prepended to the question only,
-    for embedding models that expect a query instruction.
+    Runs the engine's own retrieval stage (retrieve_chunks), so whatever
+    run_query does before answer generation, including reranking when
+    config.RERANK_ENABLED is set, is what gets scored. query_prefix is
+    prepended to the text being embedded only, for embedding models that
+    expect a query instruction; the reranker always sees the plain question.
     """
     import chromadb
     from chromadb.config import Settings
 
-    from querying.query_engine import _embed_text
+    from querying.query_engine import _embed_text, retrieve_chunks
 
     client = chromadb.PersistentClient(
         path=index_dir, settings=Settings(anonymized_telemetry=False)
@@ -98,19 +100,10 @@ def retrieve_sources(index_dir: str, questions: list[dict],
         embedding = _embed_text(query_prefix + q["question"], lambda _: None)
         assert embedding is not None, f"{q['id']}: embedding failed"
 
-        res = collection.query(
-            query_embeddings=[embedding],
-            n_results=top_k * 3,
-            include=["metadatas"],
+        _, metas, _ = retrieve_chunks(
+            collection, q["question"], embedding, top_k, log=lambda _: None
         )
-        sources: list[str] = []
-        for meta in res.get("metadatas", [[]])[0]:
-            source = meta.get("source", "")
-            if source and source not in sources:
-                sources.append(source)
-            if len(sources) == top_k:
-                break
-        results[q["id"]] = sources
+        results[q["id"]] = [m.get("source", "") for m in metas]
     return results
 
 
