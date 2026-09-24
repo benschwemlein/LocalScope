@@ -189,8 +189,9 @@ def retrieve_chunks(
 
     Returns (docs, metas, distances), best first. Distances are always
     lower-is-better. Without reranking they are the embedding distances; with
-    reranking they are negated cross-encoder scores, so callers ranking or
-    normalising by distance behave the same either way.
+    reranking they are negated cross-encoder scores, and with a second round
+    they are fused rank positions, so callers ranking or normalising by
+    distance behave the same in every case.
     """
     rerank = config.RERANK_ENABLED
     # Fetch more candidates than top_k so deduplication still yields top_k
@@ -233,6 +234,16 @@ def retrieve_chunks(
             deduped.append((doc, meta, dist))
         if len(deduped) == top_k:
             break
+
+    if config.SECOND_ROUND != "off":
+        from querying.second_round import second_round
+
+        start = time.monotonic()
+        deduped, terms = second_round(
+            collection, question, deduped, top_k, config.SECOND_ROUND, log
+        )
+        log(f"[query_engine] Second round ({config.SECOND_ROUND}) searched "
+            f"{terms} in {time.monotonic() - start:.2f}s")
 
     return (
         [r[0] for r in deduped],

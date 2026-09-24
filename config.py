@@ -47,5 +47,16 @@ RERANK_MODEL = env("LCQ_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANK_POOL = int(env("LCQ_RERANK_POOL", "50"))
 RERANK_DEVICE = env("LCQ_RERANK_DEVICE", "")  # "" = auto (mps, cuda or cpu)
 
+# Second retrieval round (off by default). Reads the best first-round chunks,
+# picks the code identifiers they use, searches the index for those names,
+# and fuses that ranking with the first round. The number of files returned
+# is unchanged.
+#   "off"  one round only
+#   "prf"  identifiers chosen by rarity (pseudo-relevance feedback, no LLM)
+#   "llm"  identifiers chosen by CHAT_MODEL
+SECOND_ROUND = env("LCQ_SECOND_ROUND", "off")
+SECOND_ROUND_SEED_CHUNKS = int(env("LCQ_SECOND_ROUND_SEED_CHUNKS", "3"))
+SECOND_ROUND_TERMS = int(env("LCQ_SECOND_ROUND_TERMS", "8"))
+
 # Optional default repo
 DEFAULT_REPO_ROOT = env("LCQ_REPO_ROOT", "")
