@@ -15,6 +15,12 @@ output are invisible):
     read_file(path, start)   up to READ_LINES numbered lines of one file
     submit(files)            final answer: file paths, most relevant first
 
+Optionally the agent also gets the semantic index (pass `semantic`):
+
+    semantic_search(query)   files whose code is closest in meaning to query
+    seed=True                the index's top files for the question are in
+                             the first message, as a starting point to verify
+
 run_agent() returns the submitted files plus a record of what the agent did.
 """
 
@@ -23,6 +29,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 import requests
 
@@ -74,9 +81,22 @@ TOOLS = [
     }},
 ]
 
+SEMANTIC_TOOL = {"type": "function", "function": {
+    "name": "semantic_search",
+    "description": "Find files whose code is closest in meaning to a natural-language "
+                   "description, even when they share no words with it. Returns up to "
+                   "10 file paths, most similar first, each with a one-line preview.",
+    "parameters": {"type": "object", "properties": {
+        "query": {"type": "string", "description": "What the code you want does or is about"},
+    }, "required": ["query"]},
+}}
+
+# (path, preview) pairs, most similar first
+SemanticSearch = Callable[[str], list[tuple[str, str]]]
+
 SYSTEM_PROMPT = """You are finding the files in a codebase that are relevant to a question.
 You cannot see the code until you search for it. Use the tools:
-grep to search contents, find_files to search paths, read_file to read code.
+grep to search contents, find_files to search paths, read_file to read code{semantic_hint}.
 Search in several steps: start from words in the question, read what you find,
 then search for the class, method and field names the code actually uses to
 find callers, implementations, configuration and the other side of any API
@@ -157,11 +177,11 @@ class AgentRun:
     error: str = ""
 
 
-def _chat(model: str, messages: list, think: bool | None) -> dict:
+def _chat(model: str, messages: list, think: bool | None, tools: list) -> dict:
     payload = {
         "model": model,
         "messages": messages,
-        "tools": TOOLS,
+        "tools": tools,
         "stream": False,
         # num_predict caps one reply. Tool calls and file lists are short; the
         # cap only stops a runaway generation, which otherwise runs to the
@@ -175,15 +195,33 @@ def _chat(model: str, messages: list, think: bool | None) -> dict:
     return resp.json()["message"]
 
 
+def _format_hits(hits: list[tuple[str, str]]) -> str:
+    return "\n".join(f"{i}. {path}  |  {preview}" for i, (path, preview) in enumerate(hits, 1)) \
+        or "no results"
+
+
 def run_agent(question: str, repo: Repo, model: str, top_k: int = 10,
-              max_steps: int = 25, think: bool | None = False, log=print) -> AgentRun:
-    """Let `model` search `repo` for files relevant to `question`."""
+              max_steps: int = 25, think: bool | None = False,
+              semantic: SemanticSearch | None = None, seed: bool = False,
+              log=print) -> AgentRun:
+    """Let `model` search `repo` for files relevant to `question`.
+
+    With `semantic`, the agent also has a semantic_search tool; with `seed`
+    as well, the index's top files for the question open the conversation.
+    """
     run = AgentRun()
     read_order: list[str] = []
     nudged = False
+    tools = TOOLS + [SEMANTIC_TOOL] if semantic else TOOLS
+    hint = ", semantic_search to find code by meaning" if semantic else ""
+    user = question
+    if semantic and seed:
+        user = (f"{question}\n\nA semantic search of the codebase for this question "
+                "returned these files, most similar first. Treat them as a starting "
+                "point to verify, not as the answer:\n" + _format_hits(semantic(question)))
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT.format(top_k=top_k)},
-        {"role": "user", "content": question},
+        {"role": "system", "content": SYSTEM_PROMPT.format(top_k=top_k, semantic_hint=hint)},
+        {"role": "user", "content": user},
     ]
     start = time.monotonic()
     try:
@@ -191,7 +229,7 @@ def run_agent(question: str, repo: Repo, model: str, top_k: int = 10,
             if step == max_steps:
                 messages.append({"role": "user", "content":
                                  f"Stop searching and call submit now with {top_k} files."})
-            msg = _chat(model, messages, think)
+            msg = _chat(model, messages, think, tools)
             messages.append(msg)
             calls = msg.get("tool_calls") or []
             if not calls:
@@ -235,6 +273,8 @@ def run_agent(question: str, repo: Repo, model: str, top_k: int = 10,
                     result = repo.grep(args.get("pattern", ""))
                 elif name == "find_files":
                     result = repo.find_files(args.get("name", ""))
+                elif name == "semantic_search" and semantic:
+                    result = _format_hits(semantic(str(args.get("query", ""))))
                 elif name == "read_file":
                     result = repo.read_file(args.get("path", ""), args.get("start_line", 1))
                     rel = repo.resolve(args.get("path", ""))

@@ -46,7 +46,7 @@ def test_resolve_accepts_unique_suffix_and_dot_slash(repo):
 
 def _scripted(replies):
     it = iter(replies)
-    return lambda model, messages, think: next(it)
+    return lambda model, messages, think, tools: next(it)
 
 
 def _call(name, **args):
@@ -99,3 +99,49 @@ def test_no_submit_falls_back_to_files_read(repo, monkeypatch):
     run = agent.run_agent("q", repo, "m", top_k=10, max_steps=3)
     assert run.fallback and not run.submitted
     assert run.files == ["src/LoanController.java"]
+
+
+def _fake_semantic(query):
+    return [("src/FineService.java", "class FineService {")]
+
+
+def test_seed_puts_index_hits_in_the_first_message(repo, monkeypatch):
+    seen = {}
+
+    def chat(model, messages, think, tools):
+        seen["user"] = messages[1]["content"]
+        seen["tools"] = [t["function"]["name"] for t in tools]
+        return _call("submit", files=["src/FineService.java"])
+
+    monkeypatch.setattr(agent, "_chat", chat)
+    agent.run_agent("where are fines?", repo, "m", top_k=1, semantic=_fake_semantic, seed=True)
+    assert "1. src/FineService.java" in seen["user"]
+    assert "semantic_search" in seen["tools"]
+
+
+def test_semantic_tool_is_absent_without_an_index(repo, monkeypatch):
+    seen = {}
+
+    def chat(model, messages, think, tools):
+        seen["tools"] = [t["function"]["name"] for t in tools]
+        return _call("submit", files=["src/FineService.java"])
+
+    monkeypatch.setattr(agent, "_chat", chat)
+    agent.run_agent("q", repo, "m", top_k=1)
+    assert "semantic_search" not in seen["tools"]
+
+
+def test_semantic_search_tool_returns_hits(repo, monkeypatch):
+    replies = [_call("semantic_search", query="fine rules"),
+               _call("submit", files=["src/FineService.java"])]
+    captured = []
+    it = iter(replies)
+
+    def chat(model, messages, think, tools):
+        captured.append(messages[-1])
+        return next(it)
+
+    monkeypatch.setattr(agent, "_chat", chat)
+    run = agent.run_agent("q", repo, "m", top_k=1, semantic=_fake_semantic)
+    assert run.files == ["src/FineService.java"]
+    assert "src/FineService.java" in captured[-1]["content"]
