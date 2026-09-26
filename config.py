@@ -58,5 +58,13 @@ SECOND_ROUND = env("LCQ_SECOND_ROUND", "off")
 SECOND_ROUND_SEED_CHUNKS = int(env("LCQ_SECOND_ROUND_SEED_CHUNKS", "3"))
 SECOND_ROUND_TERMS = int(env("LCQ_SECOND_ROUND_TERMS", "8"))
 
+# HyDE (off by default): before searching, a chat model writes a guess at
+# the code that answers the question, and that guess is embedded ("doc") or
+# appended to the question ("both"). HYDE_HINT optionally describes the
+# codebase, e.g. "Java/Spring backend, Angular TypeScript frontend".
+HYDE_MODE = env("LCQ_HYDE", "off")
+HYDE_MODEL = env("LCQ_HYDE_MODEL", CHAT_MODEL)
+HYDE_HINT = env("LCQ_HYDE_HINT", "")
+
 # Optional default repo
 DEFAULT_REPO_ROOT = env("LCQ_REPO_ROOT", "")

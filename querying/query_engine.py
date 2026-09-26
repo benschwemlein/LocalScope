@@ -329,8 +329,14 @@ def run_query(
         raise RuntimeError("Cancelled.")
 
     _step(1 if len(bug) <= max_chars else 2, "Embedding...")
+    embed_text = query_for_embedding
+    if config.HYDE_MODE != "off":
+        from querying.hyde import text_to_embed
+
+        log(f"[query_engine] HyDE ({config.HYDE_MODE}): writing a hypothetical snippet...")
+        embed_text = text_to_embed(query_for_embedding, log=log)
     log("[query_engine] Embedding query text...")
-    q_embedding = _embed_text(query_for_embedding, log)
+    q_embedding = _embed_text(embed_text, log)
     if q_embedding is None:
         raise RuntimeError("Failed to obtain embedding from Ollama.")
 
