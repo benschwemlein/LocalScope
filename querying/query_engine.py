@@ -14,8 +14,12 @@ LogFn = Callable[[str], Any]
 
 
 def _embed_text(text: str, log: LogFn) -> list[float] | None:
-    url = f"{config.OLLAMA_URL.rstrip('/')}/api/embeddings"
-    payload = {"model": config.EMBED_MODEL, "prompt": text}
+    # /api/embed with truncate, not the older /api/embeddings: the older
+    # endpoint fails outright when the text exceeds the model's context
+    # (about 2000 characters for mxbai-embed-large), which a pasted bug
+    # report easily does. Both return the same normalised vector otherwise.
+    url = f"{config.OLLAMA_URL.rstrip('/')}/api/embed"
+    payload = {"model": config.EMBED_MODEL, "input": text, "truncate": True}
 
     try:
         resp = requests.post(url, json=payload)
@@ -37,12 +41,12 @@ def _embed_text(text: str, log: LogFn) -> list[float] | None:
         log(f"[embed_text] Could not parse JSON from Ollama: {e}")
         return None
 
-    embedding = data.get("embedding")
-    if embedding is None:
-        log(f"[embed_text] No 'embedding' field in response: {data}")
+    embeddings = data.get("embeddings") or []
+    if not embeddings:
+        log(f"[embed_text] No 'embeddings' field in response: {data}")
         return None
 
-    return embedding
+    return embeddings[0]
 
 
 def _summarize_query(long_text: str, template: str, log: LogFn) -> str:
