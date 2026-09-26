@@ -145,3 +145,17 @@ def test_semantic_search_tool_returns_hits(repo, monkeypatch):
     run = agent.run_agent("q", repo, "m", top_k=1, semantic=_fake_semantic)
     assert run.files == ["src/FineService.java"]
     assert "src/FineService.java" in captured[-1]["content"]
+
+
+def test_trust_seed_uses_the_trust_prompt(repo, monkeypatch):
+    seen = {}
+
+    def chat(model, messages, think, tools):
+        seen["system"], seen["user"] = messages[0]["content"], messages[1]["content"]
+        return _call("submit", files=["src/FineService.java"])
+
+    monkeypatch.setattr(agent, "_chat", chat)
+    agent.run_agent("where are fines?", repo, "m", top_k=1, semantic=_fake_semantic, seed="trust")
+    assert "usually right" in seen["system"]
+    assert "1. src/FineService.java" in seen["user"]
+    assert "verify, not as the answer" not in seen["user"]

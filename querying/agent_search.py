@@ -103,6 +103,21 @@ find callers, implementations, configuration and the other side of any API
 call. When you are confident, call submit with exactly {top_k} distinct file
 paths relative to the repository root, most relevant first."""
 
+# For seed="trust": the index's candidates are the default answer, and the
+# agent's job is to confirm and fill gaps rather than to search from scratch.
+TRUST_SYSTEM_PROMPT = """You are finding the files in a codebase that are relevant to a question.
+You are given candidate files from a semantic index of the codebase. They are
+usually right. Work efficiently:
+1. Read the top two or three candidates.
+2. If they answer the question, add the files they directly depend on or that
+   call them (use grep for the names you just read), then call submit.
+3. Only search more widely (grep, find_files, semantic_search) if the
+   candidates are clearly off topic or leave an obvious gap, such as the
+   other side of an API call.
+Do not re-verify every candidate. Call submit with exactly {top_k} distinct
+file paths relative to the repository root, most relevant first, keeping
+unverified candidates at the end to fill the list."""
+
 
 class Repo:
     """Read-only view of a repository, with the paths the agent may touch."""
@@ -202,12 +217,14 @@ def _format_hits(hits: list[tuple[str, str]]) -> str:
 
 def run_agent(question: str, repo: Repo, model: str, top_k: int = 10,
               max_steps: int = 25, think: bool | None = False,
-              semantic: SemanticSearch | None = None, seed: bool = False,
+              semantic: SemanticSearch | None = None, seed: bool | str = False,
               log=print) -> AgentRun:
     """Let `model` search `repo` for files relevant to `question`.
 
-    With `semantic`, the agent also has a semantic_search tool; with `seed`
-    as well, the index's top files for the question open the conversation.
+    With `semantic`, the agent also has a semantic_search tool. `seed` puts
+    the index's top files for the question in the first message: True (or
+    "verify") frames them as a starting point to check; "trust" frames them
+    as the likely answer and tells the agent to confirm and fill gaps only.
     """
     run = AgentRun()
     read_order: list[str] = []
@@ -215,12 +232,17 @@ def run_agent(question: str, repo: Repo, model: str, top_k: int = 10,
     tools = TOOLS + [SEMANTIC_TOOL] if semantic else TOOLS
     hint = ", semantic_search to find code by meaning" if semantic else ""
     user = question
-    if semantic and seed:
+    system = SYSTEM_PROMPT.format(top_k=top_k, semantic_hint=hint)
+    if semantic and seed == "trust":
+        system = TRUST_SYSTEM_PROMPT.format(top_k=top_k)
+        user = (f"{question}\n\nCandidate files from the semantic index, most likely "
+                "first:\n" + _format_hits(semantic(question)))
+    elif semantic and seed:
         user = (f"{question}\n\nA semantic search of the codebase for this question "
                 "returned these files, most similar first. Treat them as a starting "
                 "point to verify, not as the answer:\n" + _format_hits(semantic(question)))
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT.format(top_k=top_k, semantic_hint=hint)},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
     start = time.monotonic()
