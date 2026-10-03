@@ -1,0 +1,407 @@
+"""
+Agentic file search with a local model.
+
+Instead of one retrieval pass, a local chat model is given search tools and
+runs its own loop: grep for something, read what came back, search again with
+the names the code actually uses, until it is ready to name the relevant
+files. This is how Claude Code and similar agents find code, run entirely
+through Ollama.
+
+Tools (all read-only and confined to the repository root; .git and build
+output are invisible):
+
+    grep(pattern)            case-insensitive regex over file contents
+    find_files(name)         case-insensitive substring match on file paths
+    read_file(path, start)   up to READ_LINES numbered lines of one file
+    submit(files)            final answer: file paths, most relevant first
+
+Optionally the agent also gets the semantic index (pass `semantic`):
+
+    semantic_search(query)   files whose code is closest in meaning to query
+    seed=True                the index's top files for the question are in
+                             the first message, as a starting point to verify
+
+run_agent() returns the submitted files plus a record of what the agent did.
+"""
+
+import json
+import os
+import re
+import time
+from dataclasses import dataclass, field
+from typing import Callable
+
+import requests
+
+import config
+
+EXCLUDED_DIRS = {
+    ".git", ".idea", ".vscode", "node_modules", "build", "dist", "out",
+    "target", ".gradle", ".venv", "venv", "__pycache__",
+}
+MAX_FILE_BYTES = 500_000
+GREP_MAX_LINES = 40
+FIND_MAX = 50
+READ_LINES = 150
+LINE_CHARS = 200
+MAX_REPLY_TOKENS = 1024
+
+TOOLS = [
+    {"type": "function", "function": {
+        "name": "grep",
+        "description": "Search file contents for a regular expression (case-insensitive). "
+                       f"Returns up to {GREP_MAX_LINES} matching lines as path:line: text.",
+        "parameters": {"type": "object", "properties": {
+            "pattern": {"type": "string", "description": "Regular expression to search for"},
+        }, "required": ["pattern"]},
+    }},
+    {"type": "function", "function": {
+        "name": "find_files",
+        "description": "List files whose path contains the given text (case-insensitive).",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "Text to look for in file paths"},
+        }, "required": ["name"]},
+    }},
+    {"type": "function", "function": {
+        "name": "read_file",
+        "description": f"Read up to {READ_LINES} lines of a file, starting at a line number.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string", "description": "File path relative to the repository root"},
+            "start_line": {"type": "integer", "description": "First line to read (1-based)"},
+        }, "required": ["path"]},
+    }},
+    {"type": "function", "function": {
+        "name": "submit",
+        "description": "Give the final answer: the files relevant to the question, "
+                       "most relevant first. Call this exactly once, when done.",
+        "parameters": {"type": "object", "properties": {
+            "files": {"type": "array", "items": {"type": "string"},
+                      "description": "File paths relative to the repository root"},
+        }, "required": ["files"]},
+    }},
+]
+
+SEMANTIC_TOOL = {"type": "function", "function": {
+    "name": "semantic_search",
+    "description": "Find files whose code is closest in meaning to a natural-language "
+                   "description, even when they share no words with it. Returns up to "
+                   "10 file paths, most similar first, each with a one-line preview.",
+    "parameters": {"type": "object", "properties": {
+        "query": {"type": "string", "description": "What the code you want does or is about"},
+    }, "required": ["query"]},
+}}
+
+# (path, preview) pairs, most similar first
+SemanticSearch = Callable[[str], list[tuple[str, str]]]
+
+SYSTEM_PROMPT = """You are finding the files in a codebase that are relevant to a question.
+You cannot see the code until you search for it. Use the tools:
+grep to search contents, find_files to search paths, read_file to read code{semantic_hint}.
+Search in several steps: start from words in the question, read what you find,
+then search for the class, method and field names the code actually uses to
+find callers, implementations, configuration and the other side of any API
+call. When you are confident, call submit with exactly {top_k} distinct file
+paths relative to the repository root, most relevant first."""
+
+# For seed="trust": the index's candidates are the default answer, and the
+# agent's job is to confirm and fill gaps rather than to search from scratch.
+TRUST_SYSTEM_PROMPT = """You are finding the files in a codebase that are relevant to a question.
+You are given candidate files from a semantic index of the codebase. They are
+usually right. Work efficiently:
+1. Read the top two or three candidates.
+2. If they answer the question, add the files they directly depend on or that
+   call them (use grep for the names you just read), then call submit.
+3. Only search more widely (grep, find_files, semantic_search) if the
+   candidates are clearly off topic or leave an obvious gap, such as the
+   other side of an API call.
+Do not re-verify every candidate. Call submit with exactly {top_k} distinct
+file paths relative to the repository root, most relevant first, keeping
+unverified candidates at the end to fill the list."""
+
+
+class Repo:
+    """Read-only view of a repository, with the paths the agent may touch."""
+
+    def __init__(self, root: str):
+        self.root = os.path.realpath(root)
+        self.files: dict[str, str] = {}
+        for dirpath, dirnames, filenames in os.walk(self.root):
+            dirnames[:] = sorted(d for d in dirnames if d not in EXCLUDED_DIRS)
+            for name in sorted(filenames):
+                full = os.path.join(dirpath, name)
+                try:
+                    if os.path.getsize(full) > MAX_FILE_BYTES:
+                        continue
+                    with open(full, encoding="utf-8", errors="ignore") as fh:
+                        text = fh.read()
+                except OSError:
+                    continue
+                if "\x00" in text:
+                    continue  # binary
+                # Forward slashes on every OS, so paths match what the model
+                # writes and what the index stores.
+                self.files[os.path.relpath(full, self.root).replace(os.sep, "/")] = text
+
+    def resolve(self, path: str) -> str | None:
+        """A known relative path for what the agent asked for, or None."""
+        p = str(path).strip()
+        if p.startswith("./"):
+            p = p[2:]
+        p = os.path.normpath(p).replace(os.sep, "/")
+        if p in self.files:
+            return p
+        matches = [f for f in self.files if f.endswith("/" + p)]
+        return matches[0] if len(matches) == 1 else None
+
+    def grep(self, pattern: str) -> str:
+        try:
+            rx = re.compile(pattern, re.IGNORECASE)
+        except re.error:
+            rx = re.compile(re.escape(pattern), re.IGNORECASE)
+        out = []
+        for path, text in self.files.items():
+            for n, line in enumerate(text.splitlines(), 1):
+                if rx.search(line):
+                    out.append(f"{path}:{n}: {line.strip()[:LINE_CHARS]}")
+                    if len(out) >= GREP_MAX_LINES:
+                        return "\n".join(out) + "\n(more matches truncated)"
+        return "\n".join(out) or "no matches"
+
+    def find_files(self, name: str) -> str:
+        needle = str(name).lower()
+        hits = [f for f in self.files if needle in f.lower()][:FIND_MAX]
+        return "\n".join(hits) or "no files match"
+
+    def read_file(self, path: str, start_line: int = 1) -> str:
+        rel = self.resolve(path)
+        if rel is None:
+            return f"no such file: {path}"
+        lines = self.files[rel].splitlines()
+        start = max(1, int(start_line or 1))
+        chunk = lines[start - 1: start - 1 + READ_LINES]
+        body = "\n".join(f"{start + i}: {l[:LINE_CHARS]}" for i, l in enumerate(chunk))
+        more = f"\n(file has {len(lines)} lines)" if start - 1 + READ_LINES < len(lines) else ""
+        return f"{rel}\n{body}{more}"
+
+
+@dataclass
+class AgentRun:
+    files: list[str] = field(default_factory=list)
+    tool_calls: int = 0
+    submitted: bool = False
+    fallback: bool = False
+    seconds: float = 0.0
+    error: str = ""
+    # One dict per event, in order: model turns, tool calls (with arguments
+    # and a result summary) and index queries. Also streamed to `log`.
+    trace: list[dict] = field(default_factory=list)
+
+
+def _chat(model: str, messages: list, think: bool | None, tools: list) -> dict:
+    payload = {
+        "model": model,
+        "messages": messages,
+        "tools": tools,
+        "stream": False,
+        # num_predict caps one reply. Tool calls and file lists are short; the
+        # cap only stops a runaway generation, which otherwise runs to the
+        # request timeout (seen once: 600s on a single turn).
+        "options": {"temperature": 0.0, "num_ctx": 32768, "num_predict": MAX_REPLY_TOKENS},
+    }
+    if think is not None:
+        payload["think"] = think
+    resp = requests.post(f"{config.OLLAMA_URL.rstrip('/')}/api/chat", json=payload, timeout=600)
+    resp.raise_for_status()
+    return resp.json()["message"]
+
+
+def _format_hits(hits: list[tuple[str, str]]) -> str:
+    return "\n".join(f"{i}. {path}  |  {preview}" for i, (path, preview) in enumerate(hits, 1)) \
+        or "no results"
+
+
+def run_agent(question: str, repo: Repo, model: str, top_k: int = 10,
+              max_steps: int = 25, think: bool | None = False,
+              semantic: SemanticSearch | None = None, seed: bool | str = False,
+              log=print) -> AgentRun:
+    """Let `model` search `repo` for files relevant to `question`.
+
+    With `semantic`, the agent also has a semantic_search tool. `seed` puts
+    the index's top files for the question in the first message: True (or
+    "verify") frames them as a starting point to check; "trust" frames them
+    as the likely answer and tells the agent to confirm and fill gaps only.
+    """
+    run = AgentRun()
+    read_order: list[str] = []
+    nudged = False
+    start = time.monotonic()
+
+    def note(event: dict, line: str, details=()) -> None:
+        event["t"] = round(time.monotonic() - start, 1)
+        run.trace.append(event)
+        log(f"[agent {event['t']:6.1f}s] {line}")
+        for d in details:
+            log(f"[agent]           {d}")
+
+    def index_query(query: str, source: str, step: int) -> list[tuple[str, str]]:
+        t0 = time.monotonic()
+        hits = semantic(query)
+        paths = [p for p, _ in hits]
+        note({"step": step, "event": "index", "source": source, "query": query,
+              "results": paths, "ms": round((time.monotonic() - t0) * 1000)},
+             f"INDEX ({source}) \"{_short(query)}\" -> {len(paths)} files",
+             [f"{i}. {p}" for i, p in enumerate(paths, 1)])
+        return hits
+
+    tools = TOOLS + [SEMANTIC_TOOL] if semantic else TOOLS
+    hint = ", semantic_search to find code by meaning" if semantic else ""
+    user = question
+    system = SYSTEM_PROMPT.format(top_k=top_k, semantic_hint=hint)
+    log(f"[agent] model {model}; tools: {', '.join(t['function']['name'] for t in tools)}; "
+        f"seed: {seed or 'none'}; up to {max_steps} steps")
+    if semantic and seed == "trust":
+        system = TRUST_SYSTEM_PROMPT.format(top_k=top_k)
+        user = (f"{question}\n\nCandidate files from the semantic index, most likely "
+                "first:\n" + _format_hits(index_query(question, "seed", 0)))
+    elif semantic and seed:
+        user = (f"{question}\n\nA semantic search of the codebase for this question "
+                "returned these files, most similar first. Treat them as a starting "
+                "point to verify, not as the answer:\n"
+                + _format_hits(index_query(question, "seed", 0)))
+    messages = [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+    try:
+        for step in range(max_steps + 1):
+            if step == max_steps:
+                messages.append({"role": "user", "content":
+                                 f"Stop searching and call submit now with {top_k} files."})
+                note({"step": step + 1, "event": "limit"},
+                     f"step {step + 1}: step limit reached, asked to submit")
+            t0 = time.monotonic()
+            msg = _chat(model, messages, think, tools)
+            messages.append(msg)
+            calls = msg.get("tool_calls") or []
+            took = time.monotonic() - t0
+            note({"step": step + 1, "event": "model", "seconds": round(took, 1), "tool_calls": len(calls)},
+                 f"step {step + 1}: model replied in {took:.1f}s with "
+                 f"{len(calls)} tool call{'' if len(calls) == 1 else 's'}")
+            if not calls:
+                if step >= max_steps:
+                    break
+                messages.append({"role": "user", "content":
+                                 "Use the tools to search, or call submit when you are done."})
+                note({"step": step + 1, "event": "nudge"}, "  no tool call; reminded to search or submit")
+                continue
+
+            for call in calls:
+                fn = call.get("function", {})
+                name, args = fn.get("name", ""), fn.get("arguments") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except ValueError:
+                        args = {}
+                run.tool_calls += 1
+                t0 = time.monotonic()
+
+                if name == "submit":
+                    seen = []
+                    for f in args.get("files") or []:
+                        rel = repo.resolve(f)
+                        if rel and rel not in seen:
+                            seen.append(rel)
+                    asked = len(args.get("files") or [])
+                    if not seen:
+                        # Nothing usable (seen after long runs: hundreds of
+                        # invented paths). Not a real submit, so the files it
+                        # read stay available as the fallback.
+                        note({"step": step + 1, "event": "tool", "tool": "submit", "files": []},
+                             f"  submit -> 0 valid files ({asked} unknown paths); ignored")
+                        messages.append({"role": "tool", "tool_name": name, "content":
+                            "None of those paths exist. Submit file paths relative to the "
+                            "repository root, taken from your search results."})
+                        continue
+                    if len(seen) > len(run.files):
+                        run.files = seen[:top_k]
+                    run.submitted = True
+                    dropped = f" ({asked - len(seen)} unknown or repeated paths dropped)" if asked > len(seen) else ""
+                    note({"step": step + 1, "event": "tool", "tool": "submit", "files": seen},
+                         f"  submit -> {len(seen)} valid files{dropped}",
+                         [f"{i}. {p}" for i, p in enumerate(seen, 1)])
+                    # One chance to fill a short answer, as the prompt asks for
+                    # exactly top_k; the better of the two submissions stands.
+                    if len(run.files) < top_k and not nudged and step < max_steps:
+                        nudged = True
+                        messages.append({"role": "tool", "tool_name": name, "content":
+                            f"Only {len(seen)} valid file paths submitted. Search more if "
+                            f"needed, then call submit with exactly {top_k} distinct paths."})
+                        note({"step": step + 1, "event": "nudge"},
+                             f"  fewer than {top_k} files; asked to search more and submit again")
+                        continue
+                    run.seconds = time.monotonic() - start
+                    note({"event": "done", "files": run.files},
+                         f"done: {len(run.files)} files, {run.tool_calls} tool calls, {run.seconds:.1f}s")
+                    return run
+
+                event, details = None, []
+                if name == "grep":
+                    pattern = args.get("pattern", "")
+                    result = repo.grep(pattern)
+                    hits = [] if result == "no matches" else \
+                        [l for l in result.splitlines() if l and not l.startswith("(more")]
+                    files = list(dict.fromkeys(l.split(":", 1)[0] for l in hits))
+                    more = " (truncated)" if "(more matches truncated)" in result else ""
+                    summary = f"  grep /{_short(pattern)}/ -> {len(hits)} lines in {len(files)} files{more}"
+                    event = {"tool": "grep", "pattern": pattern, "lines": len(hits), "files": files}
+                    details = files[:10] + ([f"... {len(files) - 10} more"] if len(files) > 10 else [])
+                elif name == "find_files":
+                    needle = args.get("name", "")
+                    result = repo.find_files(needle)
+                    found = [] if result == "no files match" else result.splitlines()
+                    summary = f"  find_files \"{_short(needle)}\" -> {len(found)} paths"
+                    event = {"tool": "find_files", "name": needle, "files": found}
+                    details = found[:10] + ([f"... {len(found) - 10} more"] if len(found) > 10 else [])
+                elif name == "semantic_search" and semantic:
+                    result = _format_hits(index_query(str(args.get("query", "")), "tool", step + 1))
+                elif name == "read_file":
+                    path, first = args.get("path", ""), args.get("start_line", 1)
+                    result = repo.read_file(path, first)
+                    rel = repo.resolve(path)
+                    if rel and rel not in read_order:
+                        read_order.append(rel)
+                    if rel:
+                        total = len(repo.files[rel].splitlines())
+                        f0 = max(1, int(first or 1))
+                        summary = f"  read_file {rel} lines {f0}-{min(total, f0 + READ_LINES - 1)} of {total}"
+                    else:
+                        summary = f"  read_file {path} -> no such file"
+                    event = {"tool": "read_file", "path": rel or path, "start_line": first, "found": bool(rel)}
+                else:
+                    result = f"unknown tool: {name}"
+                    summary = f"  {name} -> unknown tool"
+                    event = {"tool": name, "args": args}
+                if event is not None:
+                    event.update(step=step + 1, event="tool", ms=round((time.monotonic() - t0) * 1000))
+                    note(event, summary, details)
+                messages.append({"role": "tool", "tool_name": name, "content": result})
+    except (requests.RequestException, KeyError, ValueError) as e:
+        run.error = str(e)
+        log(f"[agent_search] {model} failed: {e}")
+        note({"event": "error", "error": str(e)}, f"error: {e}")
+
+    # No submit: fall back to the files it chose to read, in the order read.
+    if not run.submitted:
+        run.files, run.fallback = read_order[:top_k], True
+        note({"event": "fallback", "files": run.files},
+             f"no submit; using the {len(run.files)} files it read, in the order read")
+    run.seconds = time.monotonic() - start
+    note({"event": "done", "files": run.files},
+         f"done: {len(run.files)} files, {run.tool_calls} tool calls, {run.seconds:.1f}s")
+    return run
+
+
+def _short(text: str, limit: int = 80) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit - 3] + "..."

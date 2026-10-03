@@ -1,0 +1,478 @@
+import os
+import json
+import threading
+import time
+from typing import Callable, Any
+
+import requests
+import chromadb
+from chromadb.config import Settings
+import chromadb.utils.embedding_functions as embedding_functions
+
+import config  # note: import module, not constants
+
+LogFn = Callable[[str], Any]
+
+
+def _embed_text(text: str, log: LogFn) -> list[float] | None:
+    # /api/embed with truncate, not the older /api/embeddings: the older
+    # endpoint fails outright when the text exceeds the model's context
+    # (about 2000 characters for mxbai-embed-large), which a pasted bug
+    # report easily does. Both return the same normalised vector otherwise.
+    url = f"{config.OLLAMA_URL.rstrip('/')}/api/embed"
+    payload = {"model": config.EMBED_MODEL, "input": text, "truncate": True}
+
+    try:
+        resp = requests.post(url, json=payload)
+    except requests.RequestException as e:
+        log(f"[embed_text] Error calling Ollama: {e}")
+        return None
+
+    if not resp.ok:
+        log(f"[embed_text] Ollama returned {resp.status_code}")
+        try:
+            log(f"[embed_text] Body (first 400 chars): {resp.text[:400]!r}")
+        except Exception:
+            pass
+        return None
+
+    try:
+        data = resp.json()
+    except ValueError as e:
+        log(f"[embed_text] Could not parse JSON from Ollama: {e}")
+        return None
+
+    embeddings = data.get("embeddings") or []
+    if not embeddings:
+        log(f"[embed_text] No 'embeddings' field in response: {data}")
+        return None
+
+    return embeddings[0]
+
+
+def _summarize_query(long_text: str, template: str, log: LogFn) -> str:
+    if "<<BUG_TEXT>>" in template:
+        user_content = template.replace("<<BUG_TEXT>>", long_text)
+    else:
+        user_content = template + "\n\nBug text:\n" + long_text
+
+    url = f"{config.OLLAMA_URL.rstrip('/')}/api/chat"
+    payload = {
+        "model": config.CHAT_MODEL,
+        "messages": [
+            {"role": "user", "content": user_content},
+        ],
+        "stream": False,
+        "options": {"temperature": 0.0},
+    }
+
+    try:
+        resp = requests.post(url, json=payload)
+    except requests.RequestException as e:
+        log(f"[summarize_query] Error calling Ollama: {e}")
+        return long_text
+
+    if not resp.ok:
+        log(f"[summarize_query] Ollama returned {resp.status_code}")
+        log(f"[summarize_query] Body (first 400 chars): {resp.text[:400]!r}")
+        return long_text
+
+    try:
+        data = resp.json()
+    except ValueError as e:
+        log(f"[summarize_query] Could not parse JSON: {e}")
+        return long_text
+
+    summary = data["message"]["content"].strip()
+    log(f"[query_engine] Summarized question to {len(summary)} chars for embedding.")
+    return summary
+
+
+def _chat_with_context(
+    question: str,
+    docs,
+    metas,
+    template: str,
+    log: LogFn,
+    token_callback: Callable[[str], None] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> str:
+    context_parts = []
+    for i, (doc, meta) in enumerate(zip(docs, metas), 1):
+        path = meta.get("source", meta.get("path", "<unknown>"))
+        chunk_idx = meta.get("chunk_index", "?")
+        header = f"[Snippet {i} from {path} chunk {chunk_idx}]"
+        context_parts.append(header + "\n" + doc)
+
+    snippets_text = "\n\n".join(context_parts)
+
+    prompt = template
+    if "<<BUG_TEXT>>" in prompt:
+        prompt = prompt.replace("<<BUG_TEXT>>", question)
+    else:
+        prompt = prompt + "\n\nBug description:\n" + question
+
+    if "<<SNIPPETS>>" in prompt:
+        prompt = prompt.replace("<<SNIPPETS>>", snippets_text)
+    else:
+        prompt = prompt + "\n\nRelevant snippets:\n" + snippets_text
+
+    url = f"{config.OLLAMA_URL.rstrip('/')}/api/chat"
+    payload = {
+        "model": config.CHAT_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": token_callback is not None,
+        # Pinned so whole-file context fits wherever Ollama's own default is
+        # smaller (it scales the default with available memory).
+        "options": {"temperature": 0.0, "num_ctx": 32768},
+    }
+
+    resp = requests.post(url, json=payload, stream=token_callback is not None)
+    if not resp.ok:
+        log(f"[chat_with_context] Ollama returned {resp.status_code}")
+        log(f"[chat_with_context] Body (first 400 chars): {resp.text[:400]!r}")
+        resp.raise_for_status()
+
+    if token_callback is None:
+        data = resp.json()
+        return data["message"]["content"].strip()
+
+    # Streaming: yield tokens to callback, check cancel between each
+    full_text = []
+    try:
+        for line in resp.iter_lines():
+            if cancel_event and cancel_event.is_set():
+                resp.close()
+                return "".join(full_text)
+            if not line:
+                continue
+            try:
+                chunk = json.loads(line)
+            except ValueError:
+                continue
+            token = chunk.get("message", {}).get("content", "")
+            if token:
+                full_text.append(token)
+                token_callback(token)
+            if chunk.get("done"):
+                break
+    except Exception as e:
+        log(f"[chat_with_context] Streaming error: {e}")
+
+    return "".join(full_text)
+
+
+def _compute_relative_scores(distances: list[float]) -> list[float]:
+    if not distances:
+        return []
+
+    min_d = min(distances)
+    max_d = max(distances)
+
+    if max_d == min_d:
+        return [100.0 for _ in distances]
+
+    scores: list[float] = []
+    for d in distances:
+        score = 100.0 * (max_d - d) / (max_d - min_d)
+        if score < 0:
+            score = 0.0
+        if score > 100:
+            score = 100.0
+        scores.append(score)
+    return scores
+
+
+def retrieve_chunks(
+    collection,
+    question: str,
+    q_embedding: list[float],
+    top_k: int,
+    log: LogFn = print,
+) -> tuple[list[str], list[dict], list[float]]:
+    """
+    The retrieval stage of run_query: at most top_k chunks, one per file.
+
+    Returns (docs, metas, distances), best first. Distances are always
+    lower-is-better. Without reranking they are the embedding distances; with
+    reranking they are negated cross-encoder scores, and with a second round
+    they are fused rank positions, so callers ranking or normalising by
+    distance behave the same in every case.
+    """
+    rerank = config.RERANK_ENABLED
+    # Fetch more candidates than top_k so deduplication still yields top_k
+    # files; reranking fetches wider still so it has something to reorder.
+    pool = max(top_k * 3, config.RERANK_POOL) if rerank else top_k * 3
+
+    res = collection.query(
+        query_embeddings=[q_embedding],
+        n_results=pool,
+        include=["documents", "metadatas", "distances"],
+    )
+    docs = (res.get("documents") or [[]])[0]
+    metas = (res.get("metadatas") or [[]])[0]
+    dists = (res.get("distances") or [[]])[0]
+
+    if not docs:
+        log("[query_engine] No relevant snippets found in the index.")
+        raise RuntimeError("No relevant snippets found in the index.")
+
+    if rerank:
+        from querying.reranker import score_pairs
+
+        start = time.monotonic()
+        scores = score_pairs(question, docs)
+        order = sorted(range(len(docs)), key=lambda i: scores[i], reverse=True)
+        docs = [docs[i] for i in order]
+        metas = [metas[i] for i in order]
+        dists = [-scores[i] for i in order]
+        log(f"[query_engine] Reranked {len(scores)} chunks with "
+            f"{config.RERANK_MODEL} in {time.monotonic() - start:.2f}s")
+
+    # Deduplicate by source file — keep only the best-scoring chunk per file.
+    # This prevents one large file from flooding all top-k slots.
+    seen_sources: set[str] = set()
+    deduped: list[tuple] = []
+    for doc, meta, dist in zip(docs, metas, dists):
+        source = meta.get("source", "")
+        if source not in seen_sources:
+            seen_sources.add(source)
+            deduped.append((doc, meta, dist))
+        if len(deduped) == top_k:
+            break
+
+    if config.SECOND_ROUND != "off":
+        from querying.second_round import second_round
+
+        start = time.monotonic()
+        deduped, terms = second_round(
+            collection, question, deduped, top_k, config.SECOND_ROUND, log
+        )
+        log(f"[query_engine] Second round ({config.SECOND_ROUND}) searched "
+            f"{terms} in {time.monotonic() - start:.2f}s")
+
+    return (
+        [r[0] for r in deduped],
+        [r[1] for r in deduped],
+        [r[2] for r in deduped],
+    )
+
+
+def run_query(
+    bug_text: str,
+    index_dir: str | None = None,
+    repo_root: str | None = None,
+    top_k: int = 12,
+    max_chars: int = 4000,
+    summarizer_template: str = "",
+    chat_template: str = "",
+    log: LogFn = print,
+    cancel_event: threading.Event | None = None,
+    token_callback: Callable[[str], None] | None = None,
+    step_callback: Callable[[int, str], None] | None = None,
+):
+    """
+    Run a query against the ChromaDB index using Ollama embeddings and chat.
+    """
+    index_dir = index_dir or config.DEFAULT_INDEX_DIR
+    bug = bug_text.strip()
+    if not bug:
+        raise ValueError("Bug or question text is required.")
+
+    try:
+        client = chromadb.PersistentClient(
+            path=index_dir,
+            settings=Settings(anonymized_telemetry=False),
+        )
+
+        collections = client.list_collections()
+        if not collections:
+            raise RuntimeError(
+                "No collections found in this index directory. "
+                "You may need to build an index first."
+            )
+
+        if len(collections) > 1:
+            log("[query_engine] Multiple collections found in this index directory.")
+            log("[query_engine] Available collections:")
+            for c in collections:
+                log(f"  {c.name}")
+            log(f"[query_engine] Using first collection: {collections[0].name}")
+        else:
+            log(f"[query_engine] Using collection: {collections[0].name}")
+
+        # Get collection without embedding function since we do manual embedding
+        collection = client.get_collection(collections[0].name)
+
+    except Exception as e:
+        raise RuntimeError(f"Could not open collection from index directory: {e}") from e
+
+    log(f"[query_engine] Using index directory: {index_dir}")
+    log(f"[query_engine] Using embed model: {config.EMBED_MODEL}")
+    log(f"[query_engine] Using chat model: {config.CHAT_MODEL}")
+    log(f"[query_engine] Using Ollama URL: {config.OLLAMA_URL}")
+
+    def _cancelled():
+        return cancel_event is not None and cancel_event.is_set()
+
+    def _step(n: int, label: str):
+        if step_callback:
+            step_callback(n, label)
+
+    query_for_embedding = bug
+    if len(bug) > max_chars:
+        if _cancelled():
+            raise RuntimeError("Cancelled.")
+        log(f"[query_engine] Bug text is {len(bug)} chars, summarizing before embedding...")
+        _step(1, "Summarizing...")
+        query_for_embedding = _summarize_query(bug, summarizer_template, log)
+
+    if _cancelled():
+        raise RuntimeError("Cancelled.")
+
+    if config.ANSWER_MODE == "agent":
+        if repo_root and os.path.isdir(repo_root):
+            result = _agent_answer(bug, query_for_embedding, collection, repo_root,
+                                   chat_template, log, cancel_event, token_callback, _step)
+            if result is not None:
+                return result
+        else:
+            log("[query_engine] Answer mode is 'agent' but no repository root is set; "
+                "answering from index snippets instead.")
+
+    _step(1 if len(bug) <= max_chars else 2, "Embedding...")
+    embed_text = query_for_embedding
+    if config.HYDE_MODE != "off":
+        from querying.hyde import text_to_embed
+
+        log(f"[query_engine] HyDE ({config.HYDE_MODE}): writing a hypothetical snippet...")
+        embed_text = text_to_embed(query_for_embedding, log=log)
+    log("[query_engine] Embedding query text...")
+    q_embedding = _embed_text(embed_text, log)
+    if q_embedding is None:
+        raise RuntimeError("Failed to obtain embedding from Ollama.")
+
+    _step(2, "Searching index...")
+    log(f"[query_engine] Querying index for top {top_k} snippets...")
+
+    docs, metas, dists = retrieve_chunks(
+        collection, query_for_embedding, q_embedding, top_k, log
+    )
+
+    scores = _compute_relative_scores(dists)
+
+    count = len(metas)
+    log(f"Retrieved {count} snippet chunks.")
+
+    log("Using snippets from:")
+    for idx, (meta, dist, score) in enumerate(zip(metas, dists, scores), start=1):
+        # FIXED: Changed from "path" to "source" to match indexer metadata
+        path = meta.get("source", meta.get("path", "<unknown>"))
+        chunk_idx = meta.get("chunk_index", "?")
+        log(
+            f"  [{idx:02d}] {score:5.1f}%  {path} (chunk {chunk_idx}, distance {dist:.4f})"
+        )
+
+    best_score = max(scores) if scores else 0.0
+    if best_score < 15.0:
+        log("")
+        log("[query_engine] WARNING: All retrieved snippets have very low relative scores.")
+        log("[query_engine] The answer may rely mostly on the bug text and not on code context.")
+
+    _step(3, "Searching index...")
+
+    if _cancelled():
+        raise RuntimeError("Cancelled.")
+
+    _step(3, "Generating answer...")
+    log("")
+    log("[query_engine] Asking LLM with retrieved context...")
+    if token_callback:
+        log("\n=== ANSWER ===\n")
+
+    answer = _chat_with_context(
+        bug, docs, metas, chat_template, log,
+        token_callback=token_callback,
+        cancel_event=cancel_event,
+    )
+
+    return {
+        "answer": answer,
+        "docs": docs,
+        "metas": metas,
+        "distances": dists,
+        "scores": scores,
+        "mode": "snippets",
+    }
+
+
+def _agent_answer(bug, question, collection, repo_root, chat_template, log,
+                  cancel_event, token_callback, step):
+    """Answer from whole files chosen by the search agent (see agent_answer.py).
+
+    Returns None if the agent found nothing, so run_query can fall back to
+    snippets. Files are listed in the agent's order; there is no similarity
+    score, so scores are None.
+    """
+    from querying.agent_answer import find_files, whole_files
+
+    step(2, "Searching (agent)...")
+    log(f"[query_engine] Agent search with {config.AGENT_MODEL or config.CHAT_MODEL} "
+        f"in {repo_root} ...")
+    run = find_files(question, collection, repo_root, log)
+    log(f"[query_engine] Agent chose {len(run.files)} files in {run.seconds:.0f}s, "
+        f"{run.tool_calls} tool calls{' (no submit, used files it read)' if run.fallback else ''}.")
+    counts: dict[str, int] = {}
+    for e in run.trace:
+        if e.get("event") == "tool":
+            counts[e["tool"]] = counts.get(e["tool"], 0) + 1
+    index_seed = sum(1 for e in run.trace if e.get("event") == "index" and e.get("source") == "seed")
+    index_tool = sum(1 for e in run.trace if e.get("event") == "index" and e.get("source") == "tool")
+    model_turns = sum(1 for e in run.trace if e.get("event") == "model")
+    n_index = index_seed + index_tool
+    log(f"[query_engine] Agent summary: {model_turns} model turns; index queried "
+        f"{n_index} time{'' if n_index == 1 else 's'} ({index_seed} seed, {index_tool} semantic_search); "
+        + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
+
+    if cancel_event is not None and cancel_event.is_set():
+        raise RuntimeError("Cancelled.")
+    if not run.files:
+        log("[query_engine] Agent found no files; answering from index snippets instead.")
+        return None
+
+    docs, metas, skipped = whole_files(repo_root, run.files, config.AGENT_CONTEXT_CHARS)
+    log("Answering from whole files:")
+    for idx, meta in enumerate(metas, start=1):
+        log(f"  [{idx:02d}] {meta['source']}")
+    if skipped:
+        log(f"  skipped (over the {config.AGENT_CONTEXT_CHARS:,} character budget or unreadable): "
+            + ", ".join(skipped))
+
+    step(3, "Generating answer...")
+    log("")
+    log("[query_engine] Asking LLM with whole files...")
+    if token_callback:
+        log("\n=== ANSWER ===\n")
+
+    answer = _chat_with_context(
+        bug, docs, metas, chat_template, log,
+        token_callback=token_callback,
+        cancel_event=cancel_event,
+    )
+
+    return {
+        "answer": answer,
+        "docs": docs,
+        "metas": metas,
+        "distances": [0.0] * len(metas),
+        "scores": [None] * len(metas),
+        "mode": "agent",
+        "agent": {
+            "files": run.files,
+            "skipped": skipped,
+            "tool_calls": run.tool_calls,
+            "seconds": run.seconds,
+            "fallback": run.fallback,
+            "trace": run.trace,
+        },
+    }
